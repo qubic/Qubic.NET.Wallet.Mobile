@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <base href="/" />
+    <title>Qubic Wallet</title>
+    <link rel="icon" href="data:," />
+    <link href="lib/bootstrap/bootstrap.min.css" rel="stylesheet" />
+    <link href="lib/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet" />
+    <link href="app.css" rel="stylesheet" />
+    <link href="Qubic.Net.Wallet.Mobile.styles.css" rel="stylesheet" />
+</head>
+<body>
+    <div id="app">
+        <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#000">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14.16 24.275" style="width:48px">
+                <path d="M 5.31 0 L 0.758 0 C 0.34 0 0 0.34 0 0.759 L 0 17.449 C 0 17.868 0.34 18.207 0.758 18.207 L 5.31 18.207 C 5.729 18.207 6.069 17.868 6.069 17.449 L 6.069 0.759 C 6.069 0.34 5.729 0 5.31 0 Z M 13.401 0 L 8.85 0 C 8.431 0 8.091 0.34 8.091 0.759 L 8.091 23.516 C 8.091 23.935 8.431 24.275 8.85 24.275 L 13.401 24.275 C 13.821 24.275 14.16 23.935 14.16 23.516 L 14.16 0.759 C 14.16 0.34 13.821 0 13.401 0 Z" fill="#23FFFF"/>
+            </svg>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" style="display:none;position:fixed;bottom:0;left:0;right:0;padding:1rem;background:#721c24;color:#f8d7da;z-index:9999;text-align:center">
+        An unhandled error occurred.
+        <a href="" style="color:inherit;text-decoration:underline;margin-left:1rem">Reload</a>
+    </div>
+
+    <script>
+        window.setTheme = (theme) => {
+            document.documentElement.setAttribute('data-bs-theme', theme);
+        };
+        window.getTheme = () => {
+            return document.documentElement.getAttribute('data-bs-theme') || 'dark';
+        };
+    </script>
+    <script src="_framework/blazor.webview.js" autostart="false"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<Router AppAssembly="typeof(Routes).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MobileLayout)" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.MobileLayout)">
+            <div class="text-center py-5">
+                <h4>Page not found</h4>
+                <p class="text-muted">The page you're looking for doesn't exist.</p>
+                <a href="/" class="btn btn-primary btn-sm">Go Home</a>
+            </div>
+        </LayoutView>
+    </NotFound>
+</Router>

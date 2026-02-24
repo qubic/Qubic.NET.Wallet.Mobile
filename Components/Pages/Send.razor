@@ -1,0 +1,154 @@
+@page "/send"
+@inject SeedSessionService Seed
+@inject QubicBackendService Backend
+@inject TickMonitorService TickMonitor
+@inject QubicSettingsService Settings
+@inject TransactionTrackerService TxTracker
+@inject QrScannerService QrScanner
+
+<h4>Send QU</h4>
+
+@if (!Seed.HasSeed)
+{
+    <div class="alert alert-warning">Enter your seed on the Home page first.</div>
+}
+else
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label-sm">Destination</label>
+                <div class="input-group">
+                    <input class="form-control mono" placeholder="IDENTITY..."
+                           maxlength="60" @bind="_destination" />
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ScanDestination" title="Scan QR">
+                        <i class="bi bi-qr-code-scan"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label-sm">Amount (QU)</label>
+                <input type="number" class="form-control" min="1"
+                       placeholder="0" @bind="_amount" />
+            </div>
+
+            @if (_error != null)
+            {
+                <div class="alert alert-danger small">@_error</div>
+            }
+
+            @if (_txResult != null)
+            {
+                <div class="alert alert-success small">
+                    Transaction broadcast! <span class="mono">@_txResult[..16]...</span>
+                </div>
+            }
+
+            <button class="btn btn-primary w-100" disabled="@(!CanSend)" @onclick="Preview">
+                @(_sending ? "Sending..." : "Preview & Send")
+            </button>
+        </div>
+    </div>
+
+    @if (_showPreview)
+    {
+        <div class="card mt-2">
+            <div class="card-header">Transaction Preview</div>
+            <div class="card-body small">
+                <div class="mb-1"><strong>To:</strong> <span class="mono">@_destination?[..16]...</span></div>
+                <div class="mb-1"><strong>Amount:</strong> @_amount?.ToString("N0") QU</div>
+                <div class="mb-1"><strong>Tick:</strong> @(TickMonitor.Tick + (uint)Settings.TickOffset)</div>
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn btn-outline-secondary flex-fill" @onclick="() => _showPreview = false">Cancel</button>
+                    <button class="btn btn-primary flex-fill" disabled="@_sending" @onclick="SignAndBroadcast">
+                        <i class="bi bi-pen me-1"></i> Sign & Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    string? _destination;
+    long? _amount;
+    string? _error;
+    string? _txResult;
+    bool _showPreview;
+    bool _sending;
+
+    bool CanSend => !_sending && _destination?.Length == 60 && _amount > 0 && TickMonitor.IsConnected;
+
+    async Task ScanDestination()
+    {
+        var result = await QrScanner.ScanAsync();
+        if (!string.IsNullOrEmpty(result))
+        {
+            _destination = result.Trim();
+            StateHasChanged();
+        }
+    }
+
+    void Preview()
+    {
+        _error = null;
+        _txResult = null;
+
+        if (_destination?.Length != 60)
+        {
+            _error = "Destination must be a 60-character identity.";
+            return;
+        }
+        if (_amount is null or <= 0)
+        {
+            _error = "Enter a valid amount.";
+            return;
+        }
+        _showPreview = true;
+    }
+
+    async Task SignAndBroadcast()
+    {
+        if (_destination == null || _amount == null) return;
+        _sending = true;
+        _error = null;
+        try
+        {
+            var targetTick = TickMonitor.Tick + (uint)Settings.TickOffset;
+            if (!QubicIdentity.TryParse(_destination, out var dest))
+            {
+                _error = "Invalid identity format.";
+                return;
+            }
+            var tx = Seed.CreateAndSignTransfer(dest, _amount.Value, targetTick);
+            var result = await Backend.BroadcastTransactionAsync(tx);
+            if (!string.IsNullOrEmpty(result.TransactionId))
+            {
+                _txResult = result.TransactionId;
+                _showPreview = false;
+                TxTracker.Track(new TrackedTransaction
+                {
+                    Hash = result.TransactionId,
+                    Source = Seed.Identity?.ToString() ?? "",
+                    Destination = _destination,
+                    Amount = _amount.Value,
+                    TargetTick = targetTick,
+                    Description = "Send QU"
+                });
+            }
+            else
+            {
+                _error = "Broadcast failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+}

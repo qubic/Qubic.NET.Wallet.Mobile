@@ -1,0 +1,53 @@
+@inject NavigationManager Nav
+@implements IDisposable
+
+<nav class="qb-tabbar">
+    @foreach (var tab in _tabs)
+    {
+        <a href="@tab.Href" class="qb-tab @(IsActive(tab.Href) ? "active" : "")" @onclick:preventDefault="false">
+            <i class="bi @tab.Icon"></i>
+            <span>@tab.Label</span>
+        </a>
+    }
+</nav>
+
+@code {
+    record Tab(string Href, string Icon, string Label);
+
+    static readonly Tab[] _tabs =
+    [
+        new("/",       "bi-house-fill",   "Home"),
+        new("/send",   "bi-send-fill",    "Send"),
+        new("/assets", "bi-coin",         "Assets"),
+        new("/defi",   "bi-graph-up",     "DeFi"),
+        new("/more",   "bi-three-dots",   "More"),
+    ];
+
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    bool IsActive(string href)
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var path = uri.AbsolutePath.TrimEnd('/');
+        var target = href.TrimEnd('/');
+
+        if (string.IsNullOrEmpty(target))
+            return string.IsNullOrEmpty(path) || path == "/";
+
+        return path.Equals(target, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(target + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

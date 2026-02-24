@@ -1,0 +1,116 @@
+@page "/receive"
+@inject SeedSessionService Seed
+@inject IJSRuntime JS
+
+<h4>Receive</h4>
+
+@if (!Seed.HasSeed)
+{
+    <div class="alert alert-warning small">
+        <i class="bi bi-exclamation-triangle me-1"></i>No wallet open. Enter a seed first.
+    </div>
+}
+else
+{
+    <div class="text-center">
+        <div class="card">
+            <div class="card-body py-4">
+                <!-- QR Code -->
+                <div class="d-flex justify-content-center mb-3">
+                    <div style="background:#fff;padding:12px;border-radius:8px;display:inline-block">
+                        @((MarkupString)_qrSvg)
+                    </div>
+                </div>
+
+                <!-- Identity -->
+                <div class="mb-1 small text-muted">Your Identity</div>
+                <div class="mono p-2 rounded mb-3"
+                     style="font-size:0.7rem;background:var(--qb-bg-elevated);word-break:break-all;user-select:all">
+                    @Seed.Identity?.ToString()
+                </div>
+
+                <button class="btn btn-primary w-100 mb-2" @onclick="CopyIdentity">
+                    <i class="bi bi-clipboard me-1"></i> @(_copied ? "Copied!" : "Copy Identity")
+                </button>
+
+                <button class="btn btn-outline-secondary w-100" @onclick="ShareIdentity">
+                    <i class="bi bi-share me-1"></i> Share
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    string _qrSvg = "";
+    bool _copied;
+
+    protected override void OnInitialized()
+    {
+        GenerateQr();
+    }
+
+    void GenerateQr()
+    {
+        var identity = Seed.Identity?.ToString();
+        if (identity == null) return;
+
+        using var qrGenerator = new QRCoder.QRCodeGenerator();
+        var qrData = qrGenerator.CreateQrCode(identity, QRCoder.QRCodeGenerator.ECCLevel.M);
+
+        // Build SVG manually from the QR data
+        var modules = qrData.ModuleMatrix;
+        var size = modules.Count;
+        var cellSize = 4;
+        var svgSize = size * cellSize;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {svgSize} {svgSize}\" width=\"200\" height=\"200\">");
+        sb.Append($"<rect width=\"{svgSize}\" height=\"{svgSize}\" fill=\"#fff\"/>");
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                if (modules[y][x])
+                {
+                    sb.Append($"<rect x=\"{x * cellSize}\" y=\"{y * cellSize}\" width=\"{cellSize}\" height=\"{cellSize}\" fill=\"#000\"/>");
+                }
+            }
+        }
+
+        sb.Append("</svg>");
+        _qrSvg = sb.ToString();
+    }
+
+    async Task CopyIdentity()
+    {
+        var identity = Seed.Identity?.ToString();
+        if (identity == null) return;
+        try
+        {
+            await Clipboard.SetTextAsync(identity);
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _copied = false;
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    async Task ShareIdentity()
+    {
+        var identity = Seed.Identity?.ToString();
+        if (identity == null) return;
+        try
+        {
+            await Share.RequestAsync(new ShareTextRequest
+            {
+                Text = identity,
+                Title = "Qubic Identity"
+            });
+        }
+        catch { }
+    }
+}

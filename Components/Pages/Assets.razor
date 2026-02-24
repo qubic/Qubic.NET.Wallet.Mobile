@@ -1,0 +1,202 @@
+@page "/assets"
+@inject SeedSessionService Seed
+@inject QubicBackendService Backend
+@inject AssetRegistryService AssetRegistry
+@inject TickMonitorService TickMonitor
+@inject QubicSettingsService Settings
+@inject TransactionTrackerService TxTracker
+
+<h4>Assets</h4>
+
+@if (!Seed.HasSeed)
+{
+    <div class="alert alert-warning">Enter your seed on the Home page first.</div>
+}
+else
+{
+    <button class="btn btn-outline-secondary btn-sm w-100 mb-3" @onclick="LoadAssets" disabled="@_loading">
+        <i class="bi bi-arrow-clockwise me-1"></i> @(_loading ? "Loading..." : "Refresh Assets")
+    </button>
+
+    @if (_assets != null && _assets.Count > 0)
+    {
+        @foreach (var asset in _assets)
+        {
+            var expanded = _expandedAsset == asset.Key;
+            <div class="card" @onclick="() => _expandedAsset = expanded ? null : asset.Key">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-bold">@asset.Name</div>
+                            <div class="mono text-muted" style="font-size:0.7rem">@asset.Issuer[..16]...</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold">@asset.Amount.ToString("N0")</div>
+                        </div>
+                    </div>
+
+                    @if (expanded)
+                    {
+                        <div class="mt-2 pt-2" style="border-top:1px solid var(--qb-border)" @onclick:stopPropagation>
+                            <div class="small mb-2">
+                                <div class="mb-1"><strong>Issuer:</strong></div>
+                                <div class="mono text-muted" style="font-size:0.65rem;word-break:break-all">@asset.Issuer</div>
+                            </div>
+                            @if (asset.ManagingContract != null)
+                            {
+                                <div class="small mb-2"><strong>Contract:</strong> @asset.ManagingContract</div>
+                            }
+
+                            <!-- Transfer section -->
+                            <div class="mt-3">
+                                <div class="fw-bold small mb-2"><i class="bi bi-send me-1"></i>Transfer</div>
+                                <div class="mb-2">
+                                    <AddressInput @bind-Value="asset.TransferDest" Placeholder="Destination identity" AllowContractIndex="false" />
+                                </div>
+                                <div class="mb-2">
+                                    <input type="number" class="form-control form-control-sm"
+                                           placeholder="Amount (max @asset.Amount.ToString("N0"))"
+                                           min="1" max="@asset.Amount"
+                                           @bind="asset.TransferAmount" />
+                                </div>
+
+                                @if (asset.TransferError != null)
+                                {
+                                    <div class="alert alert-danger small py-1">@asset.TransferError</div>
+                                }
+                                @if (asset.TransferSuccess != null)
+                                {
+                                    <div class="alert alert-success small py-1">@asset.TransferSuccess</div>
+                                }
+
+                                <button class="btn btn-sm btn-primary w-100"
+                                        disabled="@(!CanTransfer(asset))"
+                                        @onclick="() => TransferAsset(asset)">
+                                    @(asset.Transferring ? "Sending..." : "Send Asset")
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+    else if (_assets != null)
+    {
+        <div class="text-center text-muted py-4">
+            <i class="bi bi-coin" style="font-size:2rem"></i>
+            <p class="mt-2">No assets found.</p>
+        </div>
+    }
+}
+
+@if (_error != null)
+{
+    <div class="alert alert-danger small">@_error</div>
+}
+
+@code {
+    class AssetEntry
+    {
+        public string Key => $"{Issuer}:{Name}";
+        public string Name { get; set; } = "";
+        public string Issuer { get; set; } = "";
+        public long Amount { get; set; }
+        public string? ManagingContract { get; set; }
+
+        // Transfer state
+        public string? TransferDest { get; set; }
+        public long? TransferAmount { get; set; }
+        public string? TransferError { get; set; }
+        public string? TransferSuccess { get; set; }
+        public bool Transferring { get; set; }
+    }
+
+    List<AssetEntry>? _assets;
+    bool _loading;
+    string? _error;
+    string? _expandedAsset;
+
+    async Task LoadAssets()
+    {
+        if (Seed.Identity == null) return;
+        _loading = true;
+        _error = null;
+        try
+        {
+            var owned = await Backend.GetOwnedAssetsAsync(Seed.Identity.Value);
+            _assets = owned?
+                .Select(a => new AssetEntry
+                {
+                    Name = a.Data.IssuedAsset?.Name ?? "Unknown",
+                    Issuer = a.Data.IssuedAsset?.IssuerIdentity ?? a.Data.OwnerIdentity,
+                    Amount = long.TryParse(a.Data.NumberOfUnits, out var n) ? n : 0,
+                    ManagingContract = a.Data.ManagingContractIndex is > 0 ? $"#{a.Data.ManagingContractIndex}" : null
+                })
+                .ToList() ?? [];
+        }
+        catch (Exception ex) { _error = ex.Message; _assets = []; }
+        finally { _loading = false; }
+    }
+
+    bool CanTransfer(AssetEntry asset) =>
+        !asset.Transferring
+        && asset.TransferDest?.Length == 60
+        && asset.TransferAmount is > 0
+        && asset.TransferAmount <= asset.Amount
+        && TickMonitor.IsConnected;
+
+    async Task TransferAsset(AssetEntry asset)
+    {
+        asset.TransferError = null;
+        asset.TransferSuccess = null;
+        asset.Transferring = true;
+        try
+        {
+            if (!QubicIdentity.TryParse(asset.TransferDest!, out var dest))
+            {
+                asset.TransferError = "Invalid identity.";
+                return;
+            }
+
+            var targetTick = TickMonitor.Tick + (uint)Settings.TickOffset;
+
+            // Asset transfers go through QX contract (index 1), procedure TransferShareOwnershipAndPossession
+#pragma warning disable CS0612 // Using legacy payload for cleaner API (takes QubicIdentity)
+            var payload = new Qubic.Core.Payloads.AssetTransferPayload
+            {
+                Issuer = QubicIdentity.FromIdentity(asset.Issuer),
+                NewOwner = dest,
+                AssetName = asset.Name,
+                NumberOfShares = asset.TransferAmount!.Value
+            };
+#pragma warning restore CS0612
+            // QX contract address: public key with contractIndex=1 in first byte, rest zeros
+            var qxPubKey = new byte[32];
+            qxPubKey[0] = 1;
+            var qxIdentity = QubicIdentity.FromPublicKey(qxPubKey);
+            var tx = Seed.CreateAndSignTransaction(qxIdentity, 0, targetTick, payload);
+            var result = await Backend.BroadcastTransactionAsync(tx);
+
+            if (!string.IsNullOrEmpty(result.TransactionId))
+            {
+                asset.TransferSuccess = $"Broadcast! {result.TransactionId[..16]}...";
+                TxTracker.Track(new TrackedTransaction
+                {
+                    Hash = result.TransactionId,
+                    Source = Seed.Identity?.ToString() ?? "",
+                    Destination = asset.TransferDest!,
+                    Amount = asset.TransferAmount.Value,
+                    TargetTick = targetTick,
+                    Description = $"Transfer {asset.TransferAmount.Value} {asset.Name}"
+                });
+            }
+            else
+            {
+                asset.TransferError = "Broadcast failed.";
+            }
+        }
+        catch (Exception ex) { asset.TransferError = ex.Message; }
+        finally { asset.Transferring = false; }
+    }
+}

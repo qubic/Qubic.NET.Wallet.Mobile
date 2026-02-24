@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:scanner="clr-namespace:BarcodeScanning;assembly=BarcodeScanning.Native.Maui"
+             x:Class="Qubic.Net.Wallet.Mobile.ScanPage"
+             Title="Scan QR Code"
+             BackgroundColor="Black">
+
+    <Grid>
+        <scanner:CameraView
+            x:Name="CameraView"
+            CameraEnabled="True"
+            VibrationOnDetected="True"
+            ForceInverted="False"
+            OnDetectionFinished="OnDetectionFinished" />
+
+        <!-- Overlay -->
+        <Grid VerticalOptions="Start" Padding="16" BackgroundColor="#80000000">
+            <Label Text="Point at a QR code"
+                   TextColor="White"
+                   FontSize="16"
+                   HorizontalOptions="Center" />
+        </Grid>
+
+        <!-- Cancel button -->
+        <Button Text="Cancel"
+                BackgroundColor="#23ffff"
+                TextColor="Black"
+                FontAttributes="Bold"
+                CornerRadius="8"
+                Margin="20"
+                HeightRequest="48"
+                VerticalOptions="End"
+                HorizontalOptions="Fill"
+                Clicked="OnCancelClicked" />
+    </Grid>
+
+</ContentPage>

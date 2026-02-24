@@ -1,0 +1,222 @@
+@page "/settings"
+@inject QubicSettingsService Cfg
+@inject WalletStorageService WalletStorage
+@implements IDisposable
+
+<h4>Settings</h4>
+
+<!-- Connection -->
+<div class="card">
+    <div class="card-header"><i class="bi bi-wifi me-1"></i>Connection</div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label-sm">Default Backend</label>
+            <select class="form-select form-select-sm" value="@Cfg.DefaultBackend"
+                    @onchange="OnBackendChanged">
+                <option value="Rpc">RPC</option>
+                <option value="Bob">Bob</option>
+                <option value="DirectNetwork">Direct Network</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label-sm">RPC URL</label>
+            <input class="form-control form-control-sm" value="@Cfg.RpcUrl"
+                   @onchange="e => Cfg.RpcUrl = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label-sm">Bob URL</label>
+            <input class="form-control form-control-sm" value="@Cfg.BobUrl"
+                   @onchange="e => Cfg.BobUrl = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label-sm">Node Host</label>
+            <input class="form-control form-control-sm" value="@Cfg.NodeHost"
+                   @onchange="e => Cfg.NodeHost = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label-sm">Node Port</label>
+            <input type="number" class="form-control form-control-sm" value="@Cfg.NodePort"
+                   @onchange="OnNodePortChanged" />
+        </div>
+    </div>
+</div>
+
+<!-- Transactions -->
+<div class="card">
+    <div class="card-header"><i class="bi bi-send me-1"></i>Transactions</div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label-sm">Tick Offset (1-100)</label>
+            <input type="number" class="form-control form-control-sm" min="1" max="100"
+                   value="@Cfg.TickOffset"
+                   @onchange="OnTickOffsetChanged" />
+            <div class="form-text">Added to the current tick when building transactions.</div>
+        </div>
+        <div class="mb-3 d-flex align-items-center justify-content-between">
+            <div>
+                <div class="form-label-sm mb-0">Auto-Resend</div>
+                <div class="form-text">Automatically rebroadcast failed transactions.</div>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" checked="@Cfg.AutoResend"
+                       @onchange="e => Cfg.AutoResend = (bool)(e.Value ?? false)" />
+            </div>
+        </div>
+        @if (Cfg.AutoResend)
+        {
+            <div class="mb-2">
+                <label class="form-label-sm">Max Retries (1-20)</label>
+                <input type="number" class="form-control form-control-sm" min="1" max="20"
+                       value="@Cfg.AutoResendMaxRetries"
+                       @onchange="OnMaxRetriesChanged" />
+            </div>
+        }
+    </div>
+</div>
+
+@if (WalletStorage.IsOpen)
+{
+<!-- Data Management -->
+<div class="card">
+    <div class="card-header"><i class="bi bi-database me-1"></i>Data</div>
+    <div class="card-body d-grid gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ExportDb" disabled="@(!WalletStorage.IsOpen)">
+            <i class="bi bi-box-arrow-up me-1"></i> Export Wallet Database
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ImportDb" disabled="@(!WalletStorage.IsOpen)">
+            <i class="bi bi-box-arrow-in-down me-1"></i> Import Wallet Database
+        </button>
+        <hr class="my-1" />
+        <button class="btn btn-outline-warning btn-sm" @onclick="ConfirmClearTx" disabled="@(!WalletStorage.IsOpen)">
+            <i class="bi bi-trash me-1"></i> Clear Transactions & Re-sync
+        </button>
+        <button class="btn btn-outline-warning btn-sm" @onclick="ConfirmClearLogs" disabled="@(!WalletStorage.IsOpen)">
+            <i class="bi bi-trash me-1"></i> Clear Log Events & Re-sync
+        </button>
+        <button class="btn btn-outline-danger btn-sm" @onclick="ConfirmResetAll" disabled="@(!WalletStorage.IsOpen)">
+            <i class="bi bi-arrow-counterclockwise me-1"></i> Reset All Sync
+        </button>
+    </div>
+</div>
+}
+
+@if (_error != null)
+{
+    <div class="alert alert-danger small">@_error</div>
+}
+@if (_success != null)
+{
+    <div class="alert alert-success small">@_success</div>
+}
+
+<ConfirmModal Visible="@(_confirmAction != null)"
+              Title="@GetConfirmTitle()"
+              Message="@GetConfirmMessage()"
+              ConfirmText="Confirm"
+              OnConfirm="DoConfirmedAction"
+              OnCancel="CancelConfirm" />
+
+@code {
+    string? _error;
+    string? _success;
+    string? _confirmAction;
+
+    protected override void OnInitialized()
+    {
+        Cfg.OnChanged += OnStateChanged;
+    }
+
+    void OnBackendChanged(ChangeEventArgs e) => Cfg.DefaultBackend = e.Value?.ToString() ?? "Rpc";
+    void OnNodePortChanged(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var p)) Cfg.NodePort = p; }
+    void OnTickOffsetChanged(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var v)) Cfg.TickOffset = v; }
+    void OnMaxRetriesChanged(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var v)) Cfg.AutoResendMaxRetries = v; }
+
+    async Task ExportDb()
+    {
+        _error = null;
+        _success = null;
+        try
+        {
+            var bytes = WalletStorage.ExportDatabase();
+            var tempPath = Path.Combine(FileSystem.CacheDirectory, "wallet-export.db");
+            await File.WriteAllBytesAsync(tempPath, bytes);
+            await Share.RequestAsync(new ShareFileRequest
+            {
+                Title = "Export Wallet Database",
+                File = new ShareFile(tempPath)
+            });
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    async Task ImportDb()
+    {
+        _error = null;
+        _success = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) return;
+            using var stream = await result.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            WalletStorage.ImportDatabase(ms.ToArray());
+            _success = "Database imported. Sync restarted.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    void ConfirmClearTx() => _confirmAction = "cleartx";
+    void ConfirmClearLogs() => _confirmAction = "clearlogs";
+    void ConfirmResetAll() => _confirmAction = "resetall";
+    void CancelConfirm() => _confirmAction = null;
+
+    string GetConfirmTitle() => _confirmAction switch
+    {
+        "cleartx" => "Clear Transactions",
+        "clearlogs" => "Clear Log Events",
+        "resetall" => "Reset All Sync",
+        _ => "Confirm"
+    };
+
+    string GetConfirmMessage() => _confirmAction switch
+    {
+        "cleartx" => "Delete all synced transactions and re-sync from the beginning?",
+        "clearlogs" => "Delete all log events and re-sync from the beginning?",
+        "resetall" => "Reset all sync watermarks and re-sync everything from scratch?",
+        _ => ""
+    };
+
+    void DoConfirmedAction()
+    {
+        _error = null;
+        _success = null;
+        try
+        {
+            switch (_confirmAction)
+            {
+                case "cleartx":
+                    WalletStorage.ClearTransactionsAndResync();
+                    _success = "Transactions cleared. Re-syncing.";
+                    break;
+                case "clearlogs":
+                    WalletStorage.ClearLogEventsAndResync();
+                    _success = "Log events cleared. Re-syncing.";
+                    break;
+                case "resetall":
+                    WalletStorage.ResetAllWatermarksAndResync();
+                    _success = "All watermarks reset. Re-syncing.";
+                    break;
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        _confirmAction = null;
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Cfg.OnChanged -= OnStateChanged;
+    }
+}

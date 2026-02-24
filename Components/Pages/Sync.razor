@@ -1,0 +1,258 @@
+@page "/sync"
+@inject WalletStorageService WalletStorage
+@inject TickDriftService TickDrift
+@implements IDisposable
+
+<h4>Sync Manager</h4>
+
+@if (!WalletStorage.IsOpen)
+{
+    <div class="alert alert-warning small">
+        <i class="bi bi-exclamation-triangle me-1"></i>No wallet open. Enter a seed first.
+    </div>
+}
+else
+{
+    <!-- Overall Status -->
+    <div class="d-flex align-items-center gap-2 mb-3">
+        @switch (SyncSvc.State)
+        {
+            case SyncState.Syncing:
+                <span class="badge-qb-cyan"><i class="bi bi-arrow-repeat me-1"></i>Syncing</span>
+                break;
+            case SyncState.Error:
+                <span class="badge bg-danger"><i class="bi bi-exclamation-circle me-1"></i>Error</span>
+                break;
+            default:
+                <span class="badge-qb-success"><i class="bi bi-check-circle me-1"></i>Idle</span>
+                break;
+        }
+        @if (SyncSvc.InitialSyncComplete)
+        {
+            <span class="small text-muted">Initial sync complete</span>
+        }
+    </div>
+
+    <!-- RPC Stream -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-cloud me-1"></i>RPC Transactions</span>
+            <span class="small">@FormatStreamStatus(SyncSvc.RpcStatus)</span>
+        </div>
+        <div class="card-body">
+            <div class="d-flex justify-content-between small mb-1">
+                <span>Synced: @SyncSvc.TransactionsSynced</span>
+                @if (SyncSvc.RpcTotal > 0)
+                {
+                    <span>Total: @SyncSvc.RpcTotal</span>
+                }
+            </div>
+            @if (SyncSvc.RpcTotal > 0)
+            {
+                <div class="progress" style="height:6px">
+                    <div class="progress-bar" style="width:@(SyncSvc.SyncProgress)%;background:var(--qb-accent-cyan)"></div>
+                </div>
+            }
+            @if (SyncSvc.RpcStatusMessage != null)
+            {
+                <div class="small text-muted mt-1">@SyncSvc.RpcStatusMessage</div>
+            }
+        </div>
+    </div>
+
+    <!-- Bob Log Stream -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-broadcast me-1"></i>Bob Log Events</span>
+            <span class="small">@FormatStreamStatus(SyncSvc.BobLogStatus)</span>
+        </div>
+        <div class="card-body">
+            <div class="d-flex justify-content-between small mb-1">
+                <span>Synced: @SyncSvc.LogEventsSynced</span>
+                @if (SyncSvc.BobLogCatchUpEpoch != null)
+                {
+                    <span>Epoch @SyncSvc.BobLogCatchUpEpoch</span>
+                }
+            </div>
+            @if (SyncSvc.BobLogCatchUpPercent is { } pct)
+            {
+                <div class="progress" style="height:6px">
+                    <div class="progress-bar" style="width:@pct%;background:var(--qb-accent-cyan)"></div>
+                </div>
+            }
+            @if (SyncSvc.BobLogStatusMessage != null)
+            {
+                <div class="small text-muted mt-1">@SyncSvc.BobLogStatusMessage</div>
+            }
+        </div>
+    </div>
+
+    <!-- Database Stats -->
+    <div class="card">
+        <div class="card-header"><i class="bi bi-database me-1"></i>Database</div>
+        <div class="card-body small">
+            <div class="d-flex justify-content-between mb-1">
+                <span>Transactions</span><strong>@WalletStorage.TransactionCount</strong>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+                <span>Log Events</span><strong>@WalletStorage.LogEventCount</strong>
+            </div>
+
+            @if (_showWatermarks)
+            {
+                <div class="mt-2 p-2 rounded" style="background:var(--qb-bg-elevated)">
+                    @foreach (var kv in WalletStorage.GetWatermarks())
+                    {
+                        <div class="d-flex justify-content-between mb-1" style="font-size:0.75rem">
+                            <span class="text-muted">@kv.Key</span>
+                            <span class="mono">@kv.Value</span>
+                        </div>
+                    }
+                </div>
+            }
+            <button class="btn btn-outline-secondary btn-sm w-100 mt-2"
+                    @onclick="ToggleWatermarks">
+                @(_showWatermarks ? "Hide" : "Show") Watermarks
+            </button>
+        </div>
+    </div>
+
+    <!-- Sync Log -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-terminal me-1"></i>Sync Log</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ToggleLog">
+                @(_showLog ? "Hide" : "Show")
+            </button>
+        </div>
+        @if (_showLog)
+        {
+            <div class="card-body p-2" style="max-height:250px;overflow-y:auto">
+                @{ IReadOnlyList<string> logEntries; lock (SyncSvc) { logEntries = SyncSvc.SyncLog.ToList(); } }
+                @if (logEntries.Count == 0)
+                {
+                    <div class="text-center text-muted small py-2">No log entries.</div>
+                }
+                else
+                {
+                    @foreach (var line in logEntries.Reverse())
+                    {
+                        <div class="mono" style="font-size:0.65rem;line-height:1.4;color:var(--qb-text-secondary)">@line</div>
+                    }
+                }
+            </div>
+        }
+    </div>
+
+    <!-- Actions -->
+    <div class="card">
+        <div class="card-header"><i class="bi bi-tools me-1"></i>Actions</div>
+        <div class="card-body d-grid gap-2">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="RestartSync">
+                <i class="bi bi-arrow-clockwise me-1"></i> Restart Sync
+            </button>
+            <button class="btn btn-outline-warning btn-sm" @onclick="ConfirmResetRpc">
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Reset RPC Watermark
+            </button>
+            <button class="btn btn-outline-warning btn-sm" @onclick="ConfirmResetBob">
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Bob Logs
+            </button>
+            <button class="btn btn-outline-danger btn-sm" @onclick="ConfirmResetAll">
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Reset All Watermarks
+            </button>
+        </div>
+    </div>
+
+    @if (_error != null)
+    {
+        <div class="alert alert-danger small">@_error</div>
+    }
+}
+
+<ConfirmModal Visible="@(_confirmAction != null)"
+              Title="@GetConfirmTitle()"
+              Message="@GetConfirmMessage()"
+              ConfirmText="Reset"
+              OnConfirm="DoReset"
+              OnCancel="CancelConfirm" />
+
+@code {
+    WalletSyncService SyncSvc => WalletStorage.Sync;
+
+    bool _showWatermarks;
+    bool _showLog;
+    string? _confirmAction;
+    string? _error;
+    System.Threading.Timer? _refreshTimer;
+
+    protected override void OnInitialized()
+    {
+        SyncSvc.OnSyncStateChanged += OnStateChanged;
+        TickDrift.OnDriftChanged += OnStateChanged;
+        _refreshTimer = new System.Threading.Timer(_ => InvokeAsync(StateHasChanged), null, 2000, 2000);
+    }
+
+    void ToggleWatermarks() => _showWatermarks = !_showWatermarks;
+    void ToggleLog() => _showLog = !_showLog;
+    void RestartSync() => WalletStorage.RestartSync();
+    void ConfirmResetRpc() => _confirmAction = "rpc";
+    void ConfirmResetBob() => _confirmAction = "bob";
+    void ConfirmResetAll() => _confirmAction = "all";
+    void CancelConfirm() => _confirmAction = null;
+
+    string GetConfirmTitle() => _confirmAction switch
+    {
+        "rpc" => "Reset RPC",
+        "bob" => "Reset Bob",
+        _ => "Reset All"
+    };
+
+    string GetConfirmMessage() => _confirmAction switch
+    {
+        "rpc" => "Reset RPC watermark and re-sync transactions?",
+        "bob" => "Reset Bob log watermarks and re-sync logs?",
+        _ => "Reset all watermarks and re-sync everything?"
+    };
+
+    string FormatStreamStatus(StreamStatus s) => s switch
+    {
+        StreamStatus.Idle => "Idle",
+        StreamStatus.Connecting => "Connecting...",
+        StreamStatus.CatchingUp => "Catching up...",
+        StreamStatus.Live => "Live",
+        StreamStatus.Error => "Error",
+        StreamStatus.Done => "Done",
+        _ => s.ToString()
+    };
+
+    void DoReset()
+    {
+        _error = null;
+        try
+        {
+            switch (_confirmAction)
+            {
+                case "rpc":
+                    WalletStorage.ResetWatermarkAndResync("rpc_last_offset");
+                    break;
+                case "bob":
+                    WalletStorage.ResetBobLogsAndResync();
+                    break;
+                case "all":
+                    WalletStorage.ResetAllWatermarksAndResync();
+                    break;
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        _confirmAction = null;
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        SyncSvc.OnSyncStateChanged -= OnStateChanged;
+        TickDrift.OnDriftChanged -= OnStateChanged;
+        _refreshTimer?.Dispose();
+    }
+}

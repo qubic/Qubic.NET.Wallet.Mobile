@@ -1,0 +1,603 @@
+@page "/history"
+@inject WalletStorageService WalletStorage
+@inject TransactionTrackerService TxTracker
+@inject SeedSessionService Seed
+@inject TickMonitorService TickMonitor
+@implements IDisposable
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0">History</h4>
+</div>
+
+<!-- Tab pills -->
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "tx" ? "active" : "")" @onclick="ShowTxTab">
+            Transactions
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "events" ? "active" : "")" @onclick="ShowEventsTab">
+            Events
+        </button>
+    </li>
+</ul>
+
+@if (!WalletStorage.IsOpen)
+{
+    <div class="alert alert-warning small">
+        <i class="bi bi-exclamation-triangle me-1"></i>No wallet open. Enter a seed first.
+    </div>
+}
+else if (_tab == "tx")
+{
+    <!-- Filters -->
+    <div class="d-flex gap-2 mb-3">
+        <select class="form-select form-select-sm" style="width:auto"
+                @onchange="OnDirectionChanged">
+            <option value="All">All</option>
+            <option value="Sent">Sent</option>
+            <option value="Received">Received</option>
+        </select>
+        <select class="form-select form-select-sm" style="width:auto"
+                @onchange="OnHashTypeChanged">
+            <option value="All">All Types</option>
+            <option value="User">User</option>
+            <option value="System">System</option>
+        </select>
+    </div>
+
+    @if (_offset == 0 && _pendingTracked.Count > 0)
+    {
+        <!-- Pending/unsynced tracked transactions at the top -->
+        @foreach (var tx in _pendingTracked)
+        {
+            var expanded = _expandedHash == tx.Hash;
+            <div class="card" @onclick="() => _expandedHash = expanded ? null : tx.Hash">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center gap-1">
+                                <i class="bi bi-arrow-up-right text-danger" style="font-size:0.9rem"></i>
+                                <span class="mono text-muted" style="font-size:0.7rem">
+                                    @(tx.Destination.Length > 12 ? tx.Destination[..12] + "..." : tx.Destination)
+                                </span>
+                            </div>
+                            <div class="small text-muted">@(string.IsNullOrEmpty(tx.Description) ? "" : tx.Description)</div>
+                            <div class="mono text-muted" style="font-size:0.65rem">T@(tx.TargetTick)</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold small">-@tx.Amount.ToString("N0") QU</div>
+                            @TrackedStatusBadge(tx.Status)
+                        </div>
+                    </div>
+
+                    @if (expanded)
+                    {
+                        <div class="mt-2 pt-2 small" style="border-top:1px solid var(--qb-border)" @onclick:stopPropagation>
+                            <div class="mb-1"><strong>Hash:</strong></div>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Hash</div>
+                            <div class="mb-1"><strong>To:</strong></div>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Destination</div>
+                            @if (tx.MoneyFlew.HasValue)
+                            {
+                                <div class="mb-1"><strong>Money Flew:</strong> @(tx.MoneyFlew.Value ? "Yes" : "No")</div>
+                            }
+                            <div class="mb-1"><strong>Created:</strong> @tx.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                            @if (tx.ResolvedUtc.HasValue)
+                            {
+                                <div class="mb-1"><strong>Resolved:</strong> @tx.ResolvedUtc.Value.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                            }
+
+                            <div class="d-flex gap-2 mt-2">
+                                @if (tx.Status == TrackedTxStatus.Pending || tx.Status == TrackedTxStatus.Failed)
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary flex-fill"
+                                            disabled="@_repeating" @onclick="() => RepeatTx(tx)">
+                                        <i class="bi bi-arrow-repeat me-1"></i>Repeat
+                                    </button>
+                                }
+                                <button class="btn btn-sm btn-outline-danger flex-fill" @onclick="() => TxTracker.Remove(tx.Hash)">
+                                    <i class="bi bi-trash me-1"></i>Remove
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+
+    @if (_transactions == null)
+    {
+        <div class="text-center text-muted py-3">
+            <i class="bi bi-arrow-clockwise"></i> Loading...
+        </div>
+    }
+    else if (_transactions.Count == 0 && _pendingTracked.Count == 0)
+    {
+        <div class="text-center text-muted py-4">
+            <i class="bi bi-inbox" style="font-size:2rem"></i>
+            <p class="mt-2">No transactions found.</p>
+        </div>
+    }
+    else
+    {
+        @foreach (var tx in _transactions)
+        {
+            var expanded = _expandedHash == tx.Hash;
+            var isSent = tx.Source.Equals(Seed.Identity?.ToString(), StringComparison.OrdinalIgnoreCase);
+            var tracked = GetTrackedInfo(tx.Hash);
+            <div class="card" @onclick="() => _expandedHash = expanded ? null : tx.Hash">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center gap-1">
+                                <i class="bi @(isSent ? "bi-arrow-up-right text-danger" : "bi-arrow-down-left text-success")"
+                                   style="font-size:0.9rem"></i>
+                                <span class="mono text-muted" style="font-size:0.7rem">
+                                    @((isSent ? tx.Destination : tx.Source)[..Math.Min(12, (isSent ? tx.Destination : tx.Source).Length)])...
+                                </span>
+                            </div>
+                            @if (tracked != null && !string.IsNullOrEmpty(tracked.Description))
+                            {
+                                <div class="small text-muted">@tracked.Description</div>
+                            }
+                            <div class="mono text-muted" style="font-size:0.65rem">T@(tx.Tick)</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold small">@(isSent ? "-" : "+")@tx.GetAmountAsLong().ToString("N0") QU</div>
+                            @if (tracked != null)
+                            {
+                                @TrackedStatusBadge(tracked.Status)
+                            }
+                            else if (tx.MoneyFlew == true)
+                            {
+                                <span class="badge-qb-success" style="font-size:0.6rem">Executed</span>
+                            }
+                            else if (tx.MoneyFlew == false)
+                            {
+                                <span class="badge bg-secondary" style="font-size:0.6rem;padding:0.1rem 0.3rem">No flow</span>
+                            }
+                        </div>
+                    </div>
+
+                    @if (expanded)
+                    {
+                        <div class="mt-2 pt-2 small" style="border-top:1px solid var(--qb-border)" @onclick:stopPropagation>
+                            <div class="mb-1"><strong>Hash:</strong></div>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Hash</div>
+                            <div class="mb-1"><strong>From:</strong></div>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Source</div>
+                            <div class="mb-1"><strong>To:</strong></div>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Destination</div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span><strong>Input Type:</strong> @tx.InputType</span>
+                                <span><strong>Tick:</strong> @tx.Tick</span>
+                            </div>
+                            @if (tx.TimestampMs.HasValue)
+                            {
+                                <div class="mb-1"><strong>Time:</strong> @DateTimeOffset.FromUnixTimeMilliseconds(tx.TimestampMs.Value).UtcDateTime.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                            }
+                            @if (tracked != null)
+                            {
+                                <div class="mb-1"><strong>Created:</strong> @tracked.CreatedUtc.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                                @if (tracked.ResolvedUtc.HasValue)
+                                {
+                                    <div class="mb-1"><strong>Resolved:</strong> @tracked.ResolvedUtc.Value.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                                }
+                            }
+                            <div class="text-muted" style="font-size:0.6rem">Synced from: @tx.SyncedFrom</div>
+
+                            @if (tracked != null)
+                            {
+                                <div class="d-flex gap-2 mt-2">
+                                    @if (tracked.Status == TrackedTxStatus.Pending || tracked.Status == TrackedTxStatus.Failed)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary flex-fill"
+                                                disabled="@_repeating" @onclick="() => RepeatTx(tracked)">
+                                            <i class="bi bi-arrow-repeat me-1"></i>Repeat
+                                        </button>
+                                    }
+                                    <button class="btn btn-sm btn-outline-danger flex-fill" @onclick="() => TxTracker.Remove(tracked.Hash)">
+                                        <i class="bi bi-trash me-1"></i>Remove
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <!-- Pagination -->
+        <div class="d-flex justify-content-between align-items-center mt-2">
+            <button class="btn btn-sm btn-outline-secondary" disabled="@(_offset == 0)"
+                    @onclick="PrevPage">
+                <i class="bi bi-chevron-left"></i> Prev
+            </button>
+            <span class="small text-muted">Page @(_offset / PageSize + 1)</span>
+            <button class="btn btn-sm btn-outline-secondary" disabled="@(_transactions.Count < PageSize)"
+                    @onclick="NextPage">
+                Next <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+    }
+
+    <!-- Tracked bulk actions -->
+    @if (TxTracker.Transactions.Count > 0)
+    {
+        <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-sm btn-outline-secondary flex-fill" @onclick="ExportTracked">
+                <i class="bi bi-box-arrow-up me-1"></i>Export Tracked
+            </button>
+            <button class="btn btn-sm btn-outline-secondary flex-fill" @onclick="ImportTracked">
+                <i class="bi bi-box-arrow-in-down me-1"></i>Import
+            </button>
+            <button class="btn btn-sm btn-outline-danger" @onclick="() => _confirmClear = true">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+    }
+}
+else
+{
+    <!-- Events tab (log events) -->
+    @if (Sync.BobLogStatus == StreamStatus.CatchingUp)
+        {
+            <div class="alert alert-info small py-2 mb-3">
+                <i class="bi bi-arrow-repeat me-1"></i>Catching up log events...
+                @if (Sync.BobLogCatchUpPercent is { } pct)
+                {
+                    <span class="ms-1">@pct.ToString("F0")%</span>
+                }
+            </div>
+        }
+
+        <!-- Filters -->
+        <div class="d-flex gap-2 flex-wrap mb-3">
+            <select class="form-select form-select-sm" style="width:auto"
+                    @onchange="e => { _logType = string.IsNullOrEmpty(e.Value?.ToString()) ? null : int.Parse(e.Value.ToString()!); _logOffset = 0; LoadLogs(); }">
+                <option value="">All Types</option>
+                <option value="0">Transfer</option>
+                <option value="1">Asset Issue</option>
+                <option value="2">Asset Transfer</option>
+                <option value="3">Asset Transfer (v2)</option>
+                <option value="4">Contract ERR</option>
+                <option value="5">Contract WARN</option>
+                <option value="6">Contract INFO</option>
+                <option value="7">Contract DBG</option>
+                <option value="8">Burn</option>
+            </select>
+            <input class="form-control form-control-sm" style="width:80px" type="number"
+                   placeholder="Epoch" @onchange="e => { _logEpoch = string.IsNullOrEmpty(e.Value?.ToString()) ? null : uint.Parse(e.Value.ToString()!); _logOffset = 0; LoadLogs(); }" />
+            <input class="form-control form-control-sm mono" style="width:auto;flex:1;min-width:100px"
+                   placeholder="Tx hash" @onchange="e => { _logTxHash = e.Value?.ToString(); _logOffset = 0; LoadLogs(); }" />
+        </div>
+
+        @if (_logs == null)
+        {
+            <div class="text-center text-muted py-3"><i class="bi bi-arrow-clockwise"></i> Loading...</div>
+        }
+        else if (_logs.Count == 0)
+        {
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-journal" style="font-size:2rem"></i>
+                <p class="mt-2">No log events found.</p>
+            </div>
+        }
+        else
+        {
+            @foreach (var log in _logs)
+            {
+                var expanded = _expandedLogId == (log.Epoch, log.LogId);
+                <div class="card" @onclick="() => _expandedLogId = expanded ? null : (log.Epoch, log.LogId)">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="d-flex align-items-center gap-1">
+                                    @LogTypeBadge(log.LogType)
+                                    <span class="mono text-muted" style="font-size:0.7rem">T@(log.Tick)</span>
+                                </div>
+                                <div class="small mt-1">@LogSummary(log)</div>
+                            </div>
+                            <div class="text-end">
+                                <span class="mono text-muted" style="font-size:0.6rem">E@(log.Epoch)</span>
+                            </div>
+                        </div>
+
+                        @if (expanded)
+                        {
+                            <div class="mt-2 pt-2 small" style="border-top:1px solid var(--qb-border)" @onclick:stopPropagation>
+                                @if (log.TxHash != null)
+                                {
+                                    <div class="mb-1"><strong>Tx Hash:</strong></div>
+                                    <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@log.TxHash</div>
+                                }
+                                @if (log.Body != null)
+                                {
+                                    <div class="mb-1"><strong>Body (JSON):</strong></div>
+                                    <pre class="mono p-2 rounded mb-2" style="font-size:0.6rem;background:var(--qb-bg-elevated);white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto">@FormatJson(log.Body)</pre>
+                                }
+                                @if (log.BodyRaw != null)
+                                {
+                                    <div class="mb-1"><strong>Raw Hex:</strong></div>
+                                    <div class="mono text-muted mb-2" style="font-size:0.55rem;word-break:break-all">@log.BodyRaw</div>
+                                }
+                                @if (log.LogDigest != null)
+                                {
+                                    <div class="mb-1"><strong>Digest:</strong></div>
+                                    <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@log.LogDigest</div>
+                                }
+                                <div class="text-muted" style="font-size:0.6rem">
+                                    LogId: @log.LogId | Synced from: @log.SyncedFrom
+                                    @if (log.Timestamp != null) { <span>| @log.Timestamp</span> }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <!-- Pagination -->
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(_logOffset == 0)"
+                        @onclick="() => { _logOffset -= PageSize; LoadLogs(); }">
+                    <i class="bi bi-chevron-left"></i> Prev
+                </button>
+                <span class="small text-muted">Page @(_logOffset / PageSize + 1)</span>
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(_logs.Count < PageSize)"
+                        @onclick="() => { _logOffset += PageSize; LoadLogs(); }">
+                    Next <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+        }
+}
+
+@if (_error != null)
+{
+    <div class="alert alert-danger small mt-2">@_error</div>
+}
+
+<ConfirmModal Visible="_confirmClear"
+              Title="Clear Tracked"
+              Message="Remove all tracked transactions?"
+              ConfirmText="Clear"
+              OnConfirm="DoClearTracked"
+              OnCancel="CancelClear" />
+
+@code {
+    const int PageSize = 50;
+
+    string _tab = "tx";
+    string? _expandedHash;
+    string? _error;
+    bool _repeating;
+    bool _confirmClear;
+
+    // Transactions tab
+    List<StoredTransaction>? _transactions;
+    List<TrackedTransaction> _pendingTracked = [];
+    Dictionary<string, TrackedTransaction> _trackedLookup = new(StringComparer.OrdinalIgnoreCase);
+    TransactionDirection _direction = TransactionDirection.All;
+    TxHashType _hashType = TxHashType.All;
+    int _offset;
+
+    // Events tab
+    List<StoredLogEvent>? _logs;
+    int? _logType;
+    uint? _logEpoch;
+    string? _logTxHash;
+    int _logOffset;
+    (uint Epoch, long LogId)? _expandedLogId;
+    WalletSyncService Sync => WalletStorage.Sync;
+
+    protected override void OnInitialized()
+    {
+        TxTracker.OnChanged += OnStateChanged;
+        WalletStorage.Sync.OnSyncStateChanged += OnStateChanged;
+        LoadTransactions();
+    }
+
+    void ShowTxTab() { _tab = "tx"; LoadTransactions(); }
+    void ShowEventsTab() { _tab = "events"; LoadLogs(); }
+
+    // ── Transactions tab ──
+
+    void OnDirectionChanged(ChangeEventArgs e)
+    {
+        _direction = Enum.TryParse<TransactionDirection>(e.Value?.ToString(), out var d) ? d : TransactionDirection.All;
+        _offset = 0;
+        LoadTransactions();
+    }
+
+    void OnHashTypeChanged(ChangeEventArgs e)
+    {
+        _hashType = Enum.TryParse<TxHashType>(e.Value?.ToString(), out var h) ? h : TxHashType.All;
+        _offset = 0;
+        LoadTransactions();
+    }
+
+    void PrevPage() { _offset -= PageSize; LoadTransactions(); }
+    void NextPage() { _offset += PageSize; LoadTransactions(); }
+    void DoClearTracked() { TxTracker.Clear(); _confirmClear = false; LoadTransactions(); }
+    void CancelClear() => _confirmClear = false;
+
+    void LoadTransactions()
+    {
+        // Build lookup of tracked transactions by hash
+        _trackedLookup = TxTracker.Transactions
+            .ToDictionary(t => t.Hash, t => t, StringComparer.OrdinalIgnoreCase);
+
+        // Load synced transactions
+        try
+        {
+            if (WalletStorage.IsOpen)
+            {
+                _transactions = WalletStorage.GetTransactions(new TransactionQuery
+                {
+                    Direction = _direction,
+                    HashType = _hashType,
+                    Offset = _offset,
+                    Limit = PageSize,
+                    SortOrder = TransactionSortOrder.TickDesc
+                });
+            }
+            else
+            {
+                _transactions = [];
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; _transactions = []; }
+
+        // Tracked transactions not yet in the synced list (pending/unsynced)
+        var syncedHashes = new HashSet<string>(
+            (_transactions ?? []).Select(t => t.Hash), StringComparer.OrdinalIgnoreCase);
+
+        _pendingTracked = TxTracker.Transactions
+            .Where(t => !syncedHashes.Contains(t.Hash))
+            .OrderByDescending(t => t.TargetTick)
+            .ToList();
+    }
+
+    TrackedTransaction? GetTrackedInfo(string hash) =>
+        _trackedLookup.TryGetValue(hash, out var t) ? t : null;
+
+    RenderFragment TrackedStatusBadge(TrackedTxStatus status) => status switch
+    {
+        TrackedTxStatus.Pending => @<span class="badge-qb-gold" style="font-size:0.6rem">Pending</span>,
+        TrackedTxStatus.Confirmed => @<span class="badge-qb-success" style="font-size:0.6rem">Confirmed</span>,
+        TrackedTxStatus.Failed => @<span class="badge bg-danger" style="font-size:0.6rem;padding:0.1rem 0.3rem">Failed</span>,
+        _ => @<span class="badge bg-secondary" style="font-size:0.6rem;padding:0.1rem 0.3rem">Unknown</span>
+    };
+
+    async Task RepeatTx(TrackedTransaction tx)
+    {
+        _repeating = true;
+        _error = null;
+        try { await TxTracker.RepeatAsync(tx); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _repeating = false; }
+    }
+
+    async Task ExportTracked()
+    {
+        try
+        {
+            var json = TxTracker.ExportJson();
+            var path = Path.Combine(FileSystem.CacheDirectory, "tracked-tx-export.json");
+            await File.WriteAllTextAsync(path, json);
+            await Share.RequestAsync(new ShareFileRequest
+            {
+                Title = "Export Tracked Transactions",
+                File = new ShareFile(path)
+            });
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    async Task ImportTracked()
+    {
+        try
+        {
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) return;
+            using var stream = await result.OpenReadAsync();
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            TxTracker.ImportJson(json);
+            LoadTransactions();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // ── Events tab ──
+
+    void LoadLogs()
+    {
+        if (!WalletStorage.IsOpen) { _logs = []; return; }
+        try
+        {
+            _logs = WalletStorage.GetLogEvents(new LogEventQuery
+            {
+                LogType = _logType,
+                Epoch = _logEpoch,
+                TxHash = string.IsNullOrWhiteSpace(_logTxHash) ? null : _logTxHash.Trim(),
+                Offset = _logOffset,
+                Limit = PageSize
+            });
+        }
+        catch { _logs = []; }
+    }
+
+    RenderFragment LogTypeBadge(int logType) => logType switch
+    {
+        0 => BadgeFragment("Transfer", "badge-qb-cyan"),
+        1 => BadgeFragment("Issue", "badge-qb-gold"),
+        2 or 3 => BadgeFragment("Asset Tx", "badge-qb-cyan"),
+        4 => BadgeFragment("ERR", "badge bg-danger"),
+        5 => BadgeFragment("WARN", "badge bg-warning text-dark"),
+        6 => BadgeFragment("INFO", "badge-qb-success"),
+        7 => BadgeFragment("DBG", "badge bg-secondary"),
+        8 => BadgeFragment("Burn", "badge bg-danger"),
+        _ => BadgeFragment($"Type {logType}", "badge bg-secondary")
+    };
+
+    RenderFragment BadgeFragment(string text, string css) =>
+        @<span class="@css" style="font-size:0.6rem;padding:0.1rem 0.35rem;border-radius:0.25rem">@text</span>;
+
+    string LogSummary(StoredLogEvent log)
+    {
+        if (string.IsNullOrEmpty(log.Body)) return log.LogTypeName ?? $"Type {log.LogType}";
+
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(log.Body);
+            var root = doc.RootElement;
+
+            return log.LogType switch
+            {
+                0 => $"{Trunc(GetStr(root, "from"))} → {Trunc(GetStr(root, "to"))}: {GetStr(root, "amount")} QU",
+                1 => $"Issued {GetStr(root, "numberOfShares")} {GetStr(root, "name")} by {Trunc(GetStr(root, "issuerIdentity"))}",
+                2 or 3 => $"{Trunc(GetStr(root, "sourceIdentity"))} → {Trunc(GetStr(root, "destIdentity"))}: {GetStr(root, "numberOfShares")} {GetStr(root, "name")}",
+                8 => $"Burn {GetStr(root, "amount")} QU from {Trunc(GetStr(root, "from"))}",
+                >= 4 and <= 7 => $"Contract #{GetStr(root, "_contractIndex")} type {GetStr(root, "_type")}",
+                _ => log.LogTypeName ?? $"Type {log.LogType}"
+            };
+        }
+        catch
+        {
+            return log.LogTypeName ?? $"Type {log.LogType}";
+        }
+    }
+
+    static string GetStr(System.Text.Json.JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var val) ? val.ToString() : "?";
+
+    static string Trunc(string s) => s.Length > 12 ? s[..12] + "..." : s;
+
+    static string FormatJson(string json)
+    {
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+
+    // ── Common ──
+
+    void OnStateChanged() => InvokeAsync(() =>
+    {
+        if (_tab == "tx") LoadTransactions();
+        else LoadLogs();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        TxTracker.OnChanged -= OnStateChanged;
+        WalletStorage.Sync.OnSyncStateChanged -= OnStateChanged;
+    }
+}

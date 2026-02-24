@@ -1,0 +1,797 @@
+@page "/vault"
+@inject VaultService VaultSvc
+@inject SeedSessionService Seed
+@inject WalletStorageService WalletStorage
+@inject TransactionTrackerService TxTracker
+@inject TickMonitorService TickMonitor
+@inject QrScannerService QrScanner
+@using Maui.Biometric
+@implements IDisposable
+
+@if (!VaultSvc.VaultConfigured)
+{
+    <!-- No Vault — Create or Import -->
+    <h4>Vault Setup</h4>
+    <p class="text-muted small">Create an encrypted vault to store your seeds and contacts.</p>
+
+    <div class="card">
+        <div class="card-header">Create New Vault</div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label-sm">Password</label>
+                <input type="password" class="form-control" @bind="_password" @bind:event="oninput"
+                       placeholder="Vault password" />
+                @{ var pwErr = VaultService.ValidatePassword(_password); }
+                @if (!string.IsNullOrEmpty(_password) && pwErr != null)
+                {
+                    <div class="form-text text-warning">@pwErr</div>
+                }
+            </div>
+            <div class="mb-3">
+                <label class="form-label-sm">Confirm Password</label>
+                <input type="password" class="form-control" @bind="_passwordConfirm" @bind:event="oninput"
+                       placeholder="Repeat password" />
+                @if (!string.IsNullOrEmpty(_passwordConfirm) && _password != _passwordConfirm)
+                {
+                    <div class="form-text text-warning">Passwords do not match.</div>
+                }
+            </div>
+
+            @if (Seed.HasSeed)
+            {
+                <div class="mb-3">
+                    <label class="form-label-sm">Label for current seed</label>
+                    <input class="form-control" @bind="_seedLabel" placeholder="e.g. Main Wallet" />
+                </div>
+                <div class="form-text text-muted mb-3">
+                    <i class="bi bi-info-circle me-1"></i>Your current seed will be added as the first entry.
+                </div>
+            }
+
+            @if (_error != null)
+            {
+                <div class="alert alert-danger small">@_error</div>
+            }
+
+            <button class="btn btn-primary w-100" disabled="@(!CanCreate)" @onclick="CreateVault">
+                <i class="bi bi-shield-lock me-1"></i> Create Vault
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Import Existing Vault</div>
+        <div class="card-body">
+            <p class="small text-muted">Import a vault file from another device.</p>
+            <button class="btn btn-outline-secondary w-100" @onclick="ImportVault">
+                <i class="bi bi-upload me-1"></i> Import Vault File
+            </button>
+        </div>
+    </div>
+}
+else if (!VaultSvc.IsUnlocked)
+{
+    <!-- Locked -->
+    <h4>Vault Locked</h4>
+    <div class="card">
+        <div class="card-body">
+            <div class="text-center py-3">
+                <i class="bi bi-lock-fill" style="font-size:2.5rem;color:var(--qb-accent-cyan)"></i>
+            </div>
+            <div class="mb-3">
+                <input type="password" class="form-control" @bind="_password"
+                       placeholder="Enter vault password" @onkeydown="OnUnlockKeyDown" />
+            </div>
+
+            @if (_error != null)
+            {
+                <div class="alert alert-danger small">@_error</div>
+            }
+
+            <button class="btn btn-primary w-100 mb-2" disabled="@string.IsNullOrEmpty(_password)" @onclick="Unlock">
+                <i class="bi bi-unlock me-1"></i> Unlock
+            </button>
+
+            <button class="btn btn-outline-secondary w-100" @onclick="ExportVault">
+                <i class="bi bi-box-arrow-up me-1"></i> Export Vault File
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Unlocked — Seeds, Contacts, Actions -->
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h4 class="mb-0">Vault</h4>
+        <span class="badge-qb-success"><i class="bi bi-unlock me-1"></i>Unlocked</span>
+    </div>
+
+    <!-- Seeds Section -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-key-fill me-1"></i>Seeds</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddSeed = !_showAddSeed">
+                <i class="bi bi-plus"></i>
+            </button>
+        </div>
+        <div class="card-body p-0">
+            @if (_showAddSeed)
+            {
+                <div class="p-3 border-bottom" style="border-color:var(--qb-border)!important">
+                    <div class="mb-2">
+                        <input class="form-control form-control-sm" @bind="_newSeedLabel" placeholder="Label" />
+                    </div>
+                    <div class="mb-2">
+                        <input type="password" class="form-control form-control-sm mono"
+                               @bind="_newSeed" @bind:event="oninput" placeholder="55-char seed" maxlength="55" />
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mb-2" @onclick="GenerateNewSeed">
+                        <i class="bi bi-plus-circle me-1"></i> Generate Random Seed
+                    </button>
+                    @if (_generatedSeed != null)
+                    {
+                        <div class="small mb-2 p-2 rounded" style="background:var(--qb-bg-elevated)">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <strong>Generated Seed</strong>
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-1" @onclick="() => _revealSeed = !_revealSeed">
+                                    <i class="bi @(_revealSeed ? "bi-eye-slash" : "bi-eye")" style="font-size:0.7rem"></i>
+                                </button>
+                            </div>
+                            <div class="mono" style="font-size:0.65rem;word-break:break-all">
+                                @(_revealSeed ? _generatedSeed : new string('*', 55))
+                            </div>
+                            <div class="text-warning mt-1" style="font-size:0.65rem">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>Write this down! It cannot be recovered.
+                            </div>
+                        </div>
+                    }
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-primary flex-fill" disabled="@(_newSeed?.Length != 55)"
+                                @onclick="AddSeed">Add</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="CancelAddSeed">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (VaultSvc.Entries.Count == 0)
+            {
+                <div class="text-center text-muted py-3 small">No seeds stored.</div>
+            }
+            else
+            {
+                @foreach (var entry in VaultSvc.Entries)
+                {
+                    var isActive = entry.Identity == Seed.Identity?.ToString();
+                    <div class="d-flex align-items-center p-3 border-bottom @(isActive ? "bg-body-secondary" : "")"
+                         style="border-color:var(--qb-border)!important;cursor:pointer"
+                         @onclick="() => SwitchSeed(entry)">
+                        <div class="flex-grow-1">
+                            <div class="fw-bold small">
+                                @entry.Label
+                                @if (isActive) { <span class="badge-qb-cyan ms-1">Active</span> }
+                            </div>
+                            <div class="mono text-muted" style="font-size:0.7rem">@entry.Identity[..16]...@entry.Identity[^8..]</div>
+                        </div>
+
+                        @if (_editingEntry == entry.Identity)
+                        {
+                            <div class="d-flex gap-1 ms-2" @onclick:stopPropagation>
+                                <input class="form-control form-control-sm" style="width:100px"
+                                       @bind="_editLabel" />
+                                <button class="btn btn-sm btn-primary" @onclick="SaveEntryRename">
+                                    <i class="bi bi-check"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingEntry = null">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex gap-1 ms-2" @onclick:stopPropagation>
+                                <button class="btn btn-sm btn-outline-secondary" title="Rename"
+                                        @onclick="() => { _editingEntry = entry.Identity; _editLabel = entry.Label; }">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                @if (!isActive)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" title="Remove"
+                                            @onclick="() => ConfirmRemoveEntry(entry)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- Contacts Section -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-person-lines-fill me-1"></i>Contacts</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = !_showAddContact">
+                <i class="bi bi-plus"></i>
+            </button>
+        </div>
+        <div class="card-body p-0">
+            @if (_showAddContact)
+            {
+                <div class="p-3 border-bottom" style="border-color:var(--qb-border)!important">
+                    <div class="mb-2">
+                        <input class="form-control form-control-sm" @bind="_newContactLabel" placeholder="Label" />
+                    </div>
+                    <div class="mb-2">
+                        <div class="input-group input-group-sm">
+                            <input class="form-control mono"
+                                   @bind="_newContactAddress" placeholder="60-char identity" maxlength="60" />
+                            <button class="btn btn-outline-secondary" type="button" @onclick="ScanContactAddress" title="Scan QR">
+                                <i class="bi bi-qr-code-scan"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-primary flex-fill"
+                                disabled="@(_newContactAddress?.Length != 60 || string.IsNullOrWhiteSpace(_newContactLabel))"
+                                @onclick="AddContact">Add</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = false">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (VaultSvc.Contacts.Count == 0)
+            {
+                <div class="text-center text-muted py-3 small">No contacts saved.</div>
+            }
+            else
+            {
+                @foreach (var contact in VaultSvc.Contacts)
+                {
+                    <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important">
+                        <div class="flex-grow-1">
+                            <div class="fw-bold small">@contact.Label</div>
+                            <div class="mono text-muted" style="font-size:0.7rem">@contact.Address[..16]...@contact.Address[^8..]</div>
+                        </div>
+
+                        @if (_editingContact == contact.Address)
+                        {
+                            <div class="d-flex gap-1 ms-2">
+                                <input class="form-control form-control-sm" style="width:100px"
+                                       @bind="_editLabel" />
+                                <button class="btn btn-sm btn-primary" @onclick="SaveContactRename">
+                                    <i class="bi bi-check"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingContact = null">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex gap-1 ms-2">
+                                <button class="btn btn-sm btn-outline-secondary" title="Rename"
+                                        @onclick="() => { _editingContact = contact.Address; _editLabel = contact.Label; }">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" title="Remove"
+                                        @onclick="() => ConfirmRemoveContact(contact)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- Vault Actions -->
+    <div class="card">
+        <div class="card-header"><i class="bi bi-gear me-1"></i>Vault Actions</div>
+        <div class="card-body d-grid gap-2">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="() => _showChangePassword = !_showChangePassword">
+                <i class="bi bi-key me-1"></i> Change Password
+            </button>
+
+            @if (_showChangePassword)
+            {
+                <div class="p-2 rounded" style="background:var(--qb-bg-elevated)">
+                    <div class="mb-2">
+                        <input type="password" class="form-control form-control-sm"
+                               @bind="_currentPassword" placeholder="Current password" />
+                    </div>
+                    <div class="mb-2">
+                        <input type="password" class="form-control form-control-sm"
+                               @bind="_newPassword" placeholder="New password" />
+                    </div>
+                    <div class="mb-2">
+                        <input type="password" class="form-control form-control-sm"
+                               @bind="_newPasswordConfirm" placeholder="Confirm new password" />
+                    </div>
+                    <button class="btn btn-sm btn-primary w-100"
+                            disabled="@(string.IsNullOrEmpty(_currentPassword) || _newPassword != _newPasswordConfirm || VaultService.ValidatePassword(_newPassword) != null)"
+                            @onclick="ChangePassword">
+                        Save
+                    </button>
+                </div>
+            }
+
+            @if (_biometricSupported)
+            {
+                <div class="d-flex align-items-center justify-content-between p-2 rounded" style="background:var(--qb-bg-elevated)">
+                    <span class="small"><i class="bi bi-fingerprint me-1"></i>Biometric Unlock</span>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" checked="@_biometricEnabled" @onchange="ToggleBiometric" />
+                    </div>
+                </div>
+
+                @if (_showBioPasswordPrompt)
+                {
+                    <div class="p-2 rounded" style="background:var(--qb-bg-elevated)">
+                        <div class="small text-muted mb-2">Enter your vault password to enable biometric:</div>
+                        <div class="d-flex gap-2">
+                            <input type="password" class="form-control form-control-sm" @bind="_bioPassword"
+                                   placeholder="Vault password" />
+                            <button class="btn btn-sm btn-primary" disabled="@string.IsNullOrEmpty(_bioPassword)"
+                                    @onclick="SaveBioPassword">Save</button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    @onclick="() => { _showBioPasswordPrompt = false; _bioPassword = null; }">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                    </div>
+                }
+            }
+
+            <button class="btn btn-outline-secondary btn-sm" @onclick="ExportVault">
+                <i class="bi bi-box-arrow-up me-1"></i> Export Vault
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="LockVault">
+                <i class="bi bi-lock me-1"></i> Lock Vault
+            </button>
+            <button class="btn btn-outline-danger btn-sm" @onclick="() => _confirmDelete = true">
+                <i class="bi bi-trash me-1"></i> Delete Vault
+            </button>
+        </div>
+    </div>
+
+    @if (_error != null)
+    {
+        <div class="alert alert-danger small">@_error</div>
+    }
+    @if (_success != null)
+    {
+        <div class="alert alert-success small">@_success</div>
+    }
+}
+
+<ConfirmModal Visible="_confirmDelete"
+              Title="Delete Vault"
+              Message="This will permanently delete the vault file and all stored seeds and contacts. This cannot be undone."
+              ConfirmText="Delete"
+              OnConfirm="DeleteVault"
+              OnCancel="() => _confirmDelete = false" />
+
+<ConfirmModal Visible="_confirmRemoveEntry != null"
+              Title="Remove Seed"
+              Message="@($"Remove \"{_confirmRemoveEntry?.Label}\" from the vault?")"
+              ConfirmText="Remove"
+              OnConfirm="DoRemoveEntry"
+              OnCancel="() => _confirmRemoveEntry = null" />
+
+<ConfirmModal Visible="_confirmRemoveContact != null"
+              Title="Remove Contact"
+              Message="@($"Remove \"{_confirmRemoveContact?.Label}\" from contacts?")"
+              ConfirmText="Remove"
+              OnConfirm="DoRemoveContact"
+              OnCancel="() => _confirmRemoveContact = null" />
+
+@code {
+    // Create vault
+    string? _password;
+    string? _passwordConfirm;
+    string? _seedLabel;
+
+    // General
+    string? _error;
+    string? _success;
+
+    // Add seed
+    bool _showAddSeed;
+    string? _newSeedLabel;
+    string? _newSeed;
+    string? _generatedSeed;
+    bool _revealSeed;
+
+    // Add contact
+    bool _showAddContact;
+    string? _newContactLabel;
+    string? _newContactAddress;
+
+    // Rename
+    string? _editingEntry;
+    string? _editingContact;
+    string? _editLabel;
+
+    // Change password
+    bool _showChangePassword;
+    string? _currentPassword;
+    string? _newPassword;
+    string? _newPasswordConfirm;
+
+    // Confirmations
+    bool _confirmDelete;
+    VaultEntry? _confirmRemoveEntry;
+    ContactEntry? _confirmRemoveContact;
+
+    // Biometric
+    bool _biometricSupported;
+    bool _biometricEnabled;
+    const string BiometricPasswordKey = "vault_bio_password";
+
+    bool CanCreate => !string.IsNullOrEmpty(_password)
+        && _password == _passwordConfirm
+        && VaultService.ValidatePassword(_password) == null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        VaultSvc.OnVaultChanged += OnStateChanged;
+        await CheckBiometricState();
+    }
+
+    async Task CheckBiometricState()
+    {
+        try
+        {
+            _biometricSupported = await BiometricAuthentication.Current.IsAvailableAsync();
+            if (_biometricSupported)
+            {
+                var stored = await SecureStorage.GetAsync(BiometricPasswordKey);
+                _biometricEnabled = !string.IsNullOrEmpty(stored);
+            }
+        }
+        catch { _biometricSupported = false; }
+    }
+
+    string VaultFilePath => Path.Combine(FileSystem.AppDataDirectory, "vault.dat");
+
+    void CreateVault()
+    {
+        _error = null;
+        try
+        {
+            var entries = new List<VaultEntry>();
+            if (Seed.HasSeed)
+            {
+                entries.Add(new VaultEntry
+                {
+                    Label = string.IsNullOrWhiteSpace(_seedLabel) ? "Main" : _seedLabel,
+                    Seed = Seed.GetSeedForVault()
+                });
+            }
+            VaultSvc.CreateVault(VaultFilePath, _password!, entries);
+            if (entries.Count > 0)
+                VaultSvc.UnlockVault(_password!);
+            _password = null;
+            _passwordConfirm = null;
+            _seedLabel = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    async Task ImportVault()
+    {
+        _error = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "Select vault file"
+            });
+            if (result == null) return;
+
+            using var stream = await result.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+
+            var targetPath = VaultFilePath;
+            await File.WriteAllBytesAsync(targetPath, bytes);
+            VaultSvc.SetVaultPath(targetPath);
+            _success = "Vault imported. Enter password to unlock.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    void Unlock()
+    {
+        _error = null;
+        var err = VaultSvc.UnlockVault(_password ?? "");
+        if (err != null)
+        {
+            _error = err;
+            return;
+        }
+        _password = null;
+
+        // Auto-activate first seed if none active
+        if (!Seed.HasSeed && VaultSvc.Entries.Count > 0)
+            SwitchSeed(VaultSvc.Entries[0]);
+    }
+
+    void OnUnlockKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrEmpty(_password))
+            Unlock();
+    }
+
+    void SwitchSeed(VaultEntry entry)
+    {
+        _error = null;
+        try
+        {
+            // Clear previous
+            WalletStorage.ClearSeed();
+            TxTracker.ClearEncryptionKey();
+
+            // Set new
+            Seed.SetSeed(entry.Seed, entry.Label);
+            WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch);
+            TxTracker.SetEncryptionKey(entry.Seed);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    void GenerateNewSeed()
+    {
+        var chars = "abcdefghijklmnopqrstuvwxyz";
+        var rng = new Random();
+        _generatedSeed = new string(Enumerable.Range(0, 55).Select(_ => chars[rng.Next(chars.Length)]).ToArray());
+        _newSeed = _generatedSeed;
+        _revealSeed = false;
+    }
+
+    void CancelAddSeed()
+    {
+        _showAddSeed = false;
+        _generatedSeed = null;
+        _revealSeed = false;
+    }
+
+    void AddSeed()
+    {
+        _error = null;
+        try
+        {
+            VaultSvc.AddEntry(
+                string.IsNullOrWhiteSpace(_newSeedLabel) ? "Unnamed" : _newSeedLabel,
+                _newSeed!);
+            _newSeedLabel = null;
+            _newSeed = null;
+            _showAddSeed = false;
+            _generatedSeed = null;
+            _revealSeed = false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    void AddContact()
+    {
+        _error = null;
+        try
+        {
+            VaultSvc.AddContact(_newContactLabel!, _newContactAddress!);
+            _newContactLabel = null;
+            _newContactAddress = null;
+            _showAddContact = false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    void ConfirmRemoveEntry(VaultEntry entry) => _confirmRemoveEntry = entry;
+
+    void DoRemoveEntry()
+    {
+        if (_confirmRemoveEntry == null) return;
+        try
+        {
+            VaultSvc.RemoveEntry(_confirmRemoveEntry.Identity);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        _confirmRemoveEntry = null;
+    }
+
+    void ConfirmRemoveContact(ContactEntry contact) => _confirmRemoveContact = contact;
+
+    void DoRemoveContact()
+    {
+        if (_confirmRemoveContact == null) return;
+        try
+        {
+            VaultSvc.RemoveContact(_confirmRemoveContact.Address);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        _confirmRemoveContact = null;
+    }
+
+    void SaveEntryRename()
+    {
+        if (_editingEntry == null || string.IsNullOrWhiteSpace(_editLabel)) return;
+        try { VaultSvc.RenameEntry(_editingEntry, _editLabel); }
+        catch (Exception ex) { _error = ex.Message; }
+        _editingEntry = null;
+    }
+
+    void SaveContactRename()
+    {
+        if (_editingContact == null || string.IsNullOrWhiteSpace(_editLabel)) return;
+        try { VaultSvc.RenameContact(_editingContact, _editLabel); }
+        catch (Exception ex) { _error = ex.Message; }
+        _editingContact = null;
+    }
+
+    async Task ToggleBiometric(ChangeEventArgs e)
+    {
+        var enable = (bool)(e.Value ?? false);
+        _error = null;
+        try
+        {
+            if (enable)
+            {
+                // Authenticate first, then store current password
+                var result = await BiometricAuthentication.Current.AuthenticateAsync(
+                    new AuthenticationRequest("Enable Biometric", "Verify your identity to enable biometric unlock"));
+                if (result.IsSuccessful)
+                {
+                    // Need the current vault password — prompt for it
+                    _showBioPasswordPrompt = true;
+                }
+            }
+            else
+            {
+                SecureStorage.Remove(BiometricPasswordKey);
+                _biometricEnabled = false;
+                _success = "Biometric unlock disabled.";
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    bool _showBioPasswordPrompt;
+    string? _bioPassword;
+
+    async Task SaveBioPassword()
+    {
+        _showBioPasswordPrompt = false;
+        if (string.IsNullOrEmpty(_bioPassword)) return;
+
+        // Verify the password by attempting unlock (vault is already unlocked, this re-verifies)
+        var testErr = VaultSvc.UnlockVault(_bioPassword);
+        if (testErr != null)
+        {
+            _error = "Wrong password. Biometric not enabled.";
+            _bioPassword = null;
+            return;
+        }
+
+        await SecureStorage.SetAsync(BiometricPasswordKey, _bioPassword);
+        _biometricEnabled = true;
+        _bioPassword = null;
+        _success = "Biometric unlock enabled.";
+    }
+
+    async Task ChangePassword()
+    {
+        _error = null;
+        _success = null;
+        try
+        {
+            VaultSvc.ChangePassword(_currentPassword!, _newPassword!);
+
+            // Update biometric stored password if enabled
+            if (_biometricEnabled)
+            {
+                await SecureStorage.SetAsync(BiometricPasswordKey, _newPassword!);
+            }
+
+            _success = "Password changed.";
+            _showChangePassword = false;
+            _currentPassword = null;
+            _newPassword = null;
+            _newPasswordConfirm = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    async Task ExportVault()
+    {
+        _error = null;
+        try
+        {
+            var path = VaultSvc.VaultPath;
+            if (path == null || !File.Exists(path))
+            {
+                _error = "Vault file not found.";
+                return;
+            }
+            await Share.RequestAsync(new ShareFileRequest
+            {
+                Title = "Export Qubic Vault",
+                File = new ShareFile(path)
+            });
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    void LockVault()
+    {
+        Seed.ClearSeed();
+        WalletStorage.ClearSeed();
+        TxTracker.ClearEncryptionKey();
+        VaultSvc.LockVault();
+    }
+
+    void DeleteVault()
+    {
+        _confirmDelete = false;
+        try
+        {
+            Seed.ClearSeed();
+            WalletStorage.ClearSeed();
+            TxTracker.ClearEncryptionKey();
+            SecureStorage.Remove(BiometricPasswordKey);
+            _biometricEnabled = false;
+            VaultSvc.DeleteVault();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    async Task ScanContactAddress()
+    {
+        var result = await QrScanner.ScanAsync();
+        if (!string.IsNullOrEmpty(result))
+        {
+            _newContactAddress = result.Trim();
+            StateHasChanged();
+        }
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        VaultSvc.OnVaultChanged -= OnStateChanged;
+    }
+}

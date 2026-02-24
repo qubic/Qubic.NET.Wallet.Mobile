@@ -1,0 +1,588 @@
+@page "/"
+@inject SeedSessionService Seed
+@inject TickMonitorService TickMonitor
+@inject QubicBackendService Backend
+@inject VaultService Vault
+@inject WalletStorageService WalletStorage
+@inject TransactionTrackerService TxTracker
+@inject NavigationManager Nav
+@using Maui.Biometric
+@implements IDisposable
+
+@if (!Vault.VaultExists)
+{
+    <!-- No vault — must create one first -->
+    <div class="text-center py-4">
+        <img src="qubic-logo.svg" alt="Qubic" style="height:64px" class="mb-3" />
+        <h4>Welcome to Qubic Wallet</h4>
+        <p class="text-muted small">Create a vault to protect your seeds with a password.</p>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Create Vault</div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label-sm">Password</label>
+                <input type="password" class="form-control" @bind="_createPassword" @bind:event="oninput"
+                       placeholder="Vault password" />
+                @{ var pwErr = VaultService.ValidatePassword(_createPassword); }
+                @if (!string.IsNullOrEmpty(_createPassword) && pwErr != null)
+                {
+                    <div class="form-text text-warning">@pwErr</div>
+                }
+            </div>
+            <div class="mb-3">
+                <label class="form-label-sm">Confirm Password</label>
+                <input type="password" class="form-control" @bind="_createPasswordConfirm" @bind:event="oninput"
+                       placeholder="Repeat password" />
+                @if (!string.IsNullOrEmpty(_createPasswordConfirm) && _createPassword != _createPasswordConfirm)
+                {
+                    <div class="form-text text-warning">Passwords do not match.</div>
+                }
+            </div>
+
+            <hr class="my-3" />
+
+            <div class="mb-3">
+                <label class="form-label-sm">Seed (55 lowercase letters)</label>
+                <input type="password" class="form-control mono" placeholder="Enter or generate a seed..."
+                       maxlength="55" @bind="_createSeed" @bind:event="oninput" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label-sm">Label</label>
+                <input class="form-control" @bind="_createLabel" placeholder="e.g. Main Wallet" />
+            </div>
+
+            <button class="btn btn-outline-secondary w-100 mb-3" @onclick="GenerateSeed">
+                <i class="bi bi-plus-circle me-1"></i> Generate Random Seed
+            </button>
+
+            @if (_generatedSeed != null)
+            {
+                <div class="alert alert-info small mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>Generated Seed</strong>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _revealSeed = !_revealSeed">
+                            <i class="bi @(_revealSeed ? "bi-eye-slash" : "bi-eye")"></i>
+                        </button>
+                    </div>
+                    <div class="mono" style="word-break:break-all">
+                        @(_revealSeed ? _generatedSeed : new string('*', 55))
+                    </div>
+                    <div class="alert alert-warning mt-2 mb-0 small">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                        Write this seed down. If you lose it, your funds are gone forever.
+                    </div>
+                </div>
+            }
+
+            @if (_error != null)
+            {
+                <div class="alert alert-danger small">@_error</div>
+            }
+
+            <button class="btn btn-primary w-100" disabled="@(!CanCreateVault)" @onclick="CreateVaultAndActivate">
+                <i class="bi bi-shield-lock me-1"></i> Create Vault & Unlock
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Import Existing Vault</div>
+        <div class="card-body">
+            <p class="small text-muted">Import a vault file from another device.</p>
+            <button class="btn btn-outline-secondary w-100" @onclick="ImportVault">
+                <i class="bi bi-upload me-1"></i> Import Vault File
+            </button>
+        </div>
+    </div>
+}
+else if (!Vault.IsUnlocked)
+{
+    <!-- Vault exists but locked — require password or biometric -->
+    <div class="text-center py-4">
+        <i class="bi bi-lock-fill" style="font-size:3rem;color:var(--qb-accent-cyan)"></i>
+        <h4 class="mt-3">Vault Locked</h4>
+        <p class="text-muted small">Enter your password to unlock.</p>
+
+        @if (_biometricAvailable)
+        {
+            <button class="btn btn-outline-primary w-100 mb-3" @onclick="BiometricUnlock" disabled="@_biometricBusy">
+                <i class="bi bi-fingerprint me-1"></i> @(_biometricBusy ? "Authenticating..." : "Unlock with Biometric")
+            </button>
+        }
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <div class="mb-3">
+                    <input type="password" class="form-control" @bind="_unlockPassword"
+                           placeholder="Vault password" @onkeydown="OnUnlockKeyDown" />
+                </div>
+                @if (_error != null)
+                {
+                    <div class="alert alert-danger small">@_error</div>
+                }
+                <button class="btn btn-primary w-100" disabled="@string.IsNullOrEmpty(_unlockPassword)"
+                        @onclick="UnlockVault">
+                    <i class="bi bi-unlock me-1"></i> Unlock
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (_showBiometricPrompt)
+    {
+        <div class="card mt-3">
+            <div class="card-body text-center">
+                <p class="small">Enable biometric unlock for faster access?</p>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" @onclick="EnableBiometric">
+                        <i class="bi bi-fingerprint me-1"></i> Enable
+                    </button>
+                    <button class="btn btn-outline-secondary flex-fill" @onclick="() => _showBiometricPrompt = false">
+                        Not Now
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}
+else if (!Seed.HasSeed)
+{
+    <!-- Vault unlocked but no seed selected — add one -->
+    <div class="text-center py-3">
+        <i class="bi bi-key" style="font-size:2.5rem;color:var(--qb-accent-cyan)"></i>
+        <h4 class="mt-2">No Seed Active</h4>
+        <p class="text-muted small">Add a seed to your vault to get started.</p>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label-sm">Seed (55 lowercase letters)</label>
+                <input type="password" class="form-control mono" placeholder="Enter 55-char seed..."
+                       maxlength="55" @bind="_addSeed" @bind:event="oninput" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label-sm">Label</label>
+                <input class="form-control" @bind="_addLabel" placeholder="e.g. Main Wallet" />
+            </div>
+
+            <button class="btn btn-outline-secondary w-100 mb-3" @onclick="GenerateSeedForAdd">
+                <i class="bi bi-plus-circle me-1"></i> Generate Random Seed
+            </button>
+
+            @if (_generatedSeed != null)
+            {
+                <div class="alert alert-info small mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>Generated Seed</strong>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _revealSeed = !_revealSeed">
+                            <i class="bi @(_revealSeed ? "bi-eye-slash" : "bi-eye")"></i>
+                        </button>
+                    </div>
+                    <div class="mono" style="word-break:break-all">
+                        @(_revealSeed ? _generatedSeed : new string('*', 55))
+                    </div>
+                    <div class="alert alert-warning mt-2 mb-0 small">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                        Write this seed down. If you lose it, your funds are gone forever.
+                    </div>
+                </div>
+            }
+
+            @if (_error != null)
+            {
+                <div class="alert alert-danger small">@_error</div>
+            }
+
+            <button class="btn btn-primary w-100" disabled="@(_addSeed?.Length != 55)"
+                    @onclick="AddSeedAndActivate">
+                <i class="bi bi-key-fill me-1"></i> Add & Activate
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Dashboard — vault unlocked, seed active -->
+    <div class="qb-balance">
+        <div class="qb-balance-label">
+            @if (Seed.ActiveLabel != null)
+            {
+                <span>@Seed.ActiveLabel</span>
+            }
+            else
+            {
+                <span>Balance</span>
+            }
+        </div>
+        <div class="qb-balance-amount">@(_balance?.ToString("N0") ?? "—") QU</div>
+        <div class="mono small text-muted mt-1">@Seed.Identity?.ToString()[..16]...</div>
+    </div>
+
+    @if (!TickMonitor.IsConnected)
+    {
+        <button class="btn btn-primary w-100 mb-3" @onclick="Connect">
+            <i class="bi bi-wifi me-1"></i> Connect
+        </button>
+    }
+    else
+    {
+        <button class="btn btn-outline-secondary btn-sm w-100 mb-3" @onclick="RefreshNow">
+            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+        </button>
+    }
+
+    <!-- Quick Actions -->
+    <div class="qb-actions">
+        <a href="/send" class="qb-action-btn">
+            <i class="bi bi-send-fill"></i>
+            Send
+        </a>
+        <a href="/receive" class="qb-action-btn">
+            <i class="bi bi-qr-code"></i>
+            Receive
+        </a>
+        <a href="/assets" class="qb-action-btn">
+            <i class="bi bi-coin"></i>
+            Assets
+        </a>
+        <a href="/history" class="qb-action-btn">
+            <i class="bi bi-clock-history"></i>
+            History
+        </a>
+    </div>
+}
+
+@code {
+    // Create vault
+    string? _createPassword;
+    string? _createPasswordConfirm;
+    string? _createSeed;
+    string? _createLabel;
+
+    // Unlock
+    string? _unlockPassword;
+
+    // Biometric
+    bool _biometricAvailable;
+    bool _biometricBusy;
+    bool _showBiometricPrompt;
+    string? _pendingPassword; // temporarily stored after password unlock for biometric enrollment
+
+    // Add seed (post-unlock, no seeds)
+    string? _addSeed;
+    string? _addLabel;
+
+    // Shared
+    string? _generatedSeed;
+    bool _revealSeed;
+    string? _error;
+    long? _balance;
+    bool _wasConnected;
+    System.Threading.Timer? _refreshTimer;
+
+    const string BiometricPasswordKey = "vault_bio_password";
+
+    bool CanCreateVault =>
+        !string.IsNullOrEmpty(_createPassword)
+        && _createPassword == _createPasswordConfirm
+        && VaultService.ValidatePassword(_createPassword) == null
+        && _createSeed?.Length == 55;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Seed.OnSeedChanged += OnStateChanged;
+        TickMonitor.OnTickChanged += OnTickChanged;
+        Vault.OnVaultChanged += OnStateChanged;
+
+        // Check if biometric is available and a password is stored
+        await CheckBiometricAvailability();
+
+        // Auto-prompt biometric on launch if available
+        if (_biometricAvailable && Vault.VaultExists && !Vault.IsUnlocked)
+        {
+            _ = BiometricUnlock();
+        }
+    }
+
+    async Task CheckBiometricAvailability()
+    {
+        try
+        {
+            var available = await BiometricAuthentication.Current.IsAvailableAsync();
+            if (!available) { _biometricAvailable = false; return; }
+
+            // Check if we have a stored password
+            var stored = await SecureStorage.GetAsync(BiometricPasswordKey);
+            _biometricAvailable = !string.IsNullOrEmpty(stored);
+        }
+        catch
+        {
+            _biometricAvailable = false;
+        }
+    }
+
+    string VaultFilePath => Path.Combine(FileSystem.AppDataDirectory, "vault.dat");
+
+    string GenerateRandomSeed()
+    {
+        var chars = "abcdefghijklmnopqrstuvwxyz";
+        var rng = new Random();
+        return new string(Enumerable.Range(0, 55).Select(_ => chars[rng.Next(chars.Length)]).ToArray());
+    }
+
+    void GenerateSeed()
+    {
+        _generatedSeed = GenerateRandomSeed();
+        _createSeed = _generatedSeed;
+        _revealSeed = false;
+    }
+
+    void GenerateSeedForAdd()
+    {
+        _generatedSeed = GenerateRandomSeed();
+        _addSeed = _generatedSeed;
+        _revealSeed = false;
+    }
+
+    void CreateVaultAndActivate()
+    {
+        _error = null;
+        try
+        {
+            var label = string.IsNullOrWhiteSpace(_createLabel) ? "Main" : _createLabel;
+            var entries = new List<VaultEntry>
+            {
+                new VaultEntry { Label = label, Seed = _createSeed! }
+            };
+            Vault.CreateVault(VaultFilePath, _createPassword!, entries);
+            var err = Vault.UnlockVault(_createPassword!);
+            if (err != null) { _error = err; return; }
+
+            // Activate the first entry
+            var entry = Vault.Entries[0];
+            Seed.SetSeed(entry.Seed, entry.Label);
+            WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch, skipInitialSync: true);
+            TxTracker.SetEncryptionKey(entry.Seed);
+
+            // Clear form
+            _createPassword = null;
+            _createPasswordConfirm = null;
+            _createSeed = null;
+            _createLabel = null;
+            _generatedSeed = null;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    async Task ImportVault()
+    {
+        _error = null;
+        try
+        {
+            var result = await FilePicker.Default.PickAsync(new PickOptions { PickerTitle = "Select vault file" });
+            if (result == null) return;
+            using var stream = await result.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            await File.WriteAllBytesAsync(VaultFilePath, ms.ToArray());
+            Vault.SetVaultPath(VaultFilePath);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    async Task UnlockVault()
+    {
+        _error = null;
+        var password = _unlockPassword ?? "";
+        var err = Vault.UnlockVault(password);
+        if (err != null) { _error = err; return; }
+
+        // Auto-activate first seed
+        if (!Seed.HasSeed && Vault.Entries.Count > 0)
+        {
+            var entry = Vault.Entries[0];
+            Seed.SetSeed(entry.Seed, entry.Label);
+            WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch);
+            TxTracker.SetEncryptionKey(entry.Seed);
+        }
+
+        // Check if biometric is possible and not yet enabled
+        try
+        {
+            var bioAvailable = await BiometricAuthentication.Current.IsAvailableAsync();
+            var stored = await SecureStorage.GetAsync(BiometricPasswordKey);
+            if (bioAvailable && string.IsNullOrEmpty(stored))
+            {
+                _pendingPassword = password;
+                _showBiometricPrompt = true;
+            }
+        }
+        catch { }
+
+        _unlockPassword = null;
+    }
+
+    async Task BiometricUnlock()
+    {
+        _biometricBusy = true;
+        _error = null;
+        try
+        {
+            var result = await BiometricAuthentication.Current.AuthenticateAsync(
+                new AuthenticationRequest("Unlock Vault", "Authenticate to unlock your Qubic wallet"));
+
+            if (result.IsSuccessful)
+            {
+                var password = await SecureStorage.GetAsync(BiometricPasswordKey);
+                if (!string.IsNullOrEmpty(password))
+                {
+                    var err = Vault.UnlockVault(password);
+                    if (err != null)
+                    {
+                        // Stored password no longer works — clear it
+                        SecureStorage.Remove(BiometricPasswordKey);
+                        _biometricAvailable = false;
+                        _error = "Biometric unlock failed: password changed. Please enter your password.";
+                        return;
+                    }
+
+                    // Auto-activate first seed
+                    if (!Seed.HasSeed && Vault.Entries.Count > 0)
+                    {
+                        var entry = Vault.Entries[0];
+                        Seed.SetSeed(entry.Seed, entry.Label);
+                        WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch);
+                        TxTracker.SetEncryptionKey(entry.Seed);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _biometricBusy = false;
+        }
+    }
+
+    async Task EnableBiometric()
+    {
+        _showBiometricPrompt = false;
+        if (string.IsNullOrEmpty(_pendingPassword)) return;
+
+        try
+        {
+            // Verify with biometric first
+            var result = await BiometricAuthentication.Current.AuthenticateAsync(
+                new AuthenticationRequest("Enable Biometric", "Verify your identity to enable biometric unlock"));
+
+            if (result.IsSuccessful)
+            {
+                await SecureStorage.SetAsync(BiometricPasswordKey, _pendingPassword);
+                _biometricAvailable = true;
+            }
+        }
+        catch { }
+        finally
+        {
+            _pendingPassword = null;
+        }
+    }
+
+    void OnUnlockKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrEmpty(_unlockPassword))
+            _ = UnlockVault();
+    }
+
+    void AddSeedAndActivate()
+    {
+        _error = null;
+        try
+        {
+            var label = string.IsNullOrWhiteSpace(_addLabel) ? "Wallet" : _addLabel;
+            Vault.AddEntry(label, _addSeed!);
+            var entry = Vault.Entries.First(e => e.Seed == _addSeed);
+            Seed.SetSeed(entry.Seed, entry.Label);
+            WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch, skipInitialSync: true);
+            TxTracker.SetEncryptionKey(entry.Seed);
+            _addSeed = null;
+            _addLabel = null;
+            _generatedSeed = null;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    async Task Connect()
+    {
+        await TickMonitor.StartAsync();
+    }
+
+    async Task RefreshNow()
+    {
+        await FetchBalanceAndAssets();
+    }
+
+    async Task FetchBalanceAndAssets()
+    {
+        if (Seed.Identity == null || !TickMonitor.IsConnected) return;
+        try
+        {
+            var info = await Backend.GetBalanceAsync(Seed.Identity.Value);
+            if (info != null)
+                _balance = info.Amount;
+        }
+        catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    void OnTickChanged()
+    {
+        if (TickMonitor.IsConnected && !_wasConnected)
+        {
+            _wasConnected = true;
+            _ = FetchBalanceAndAssets();
+            StartRefreshTimer();
+        }
+        else if (!TickMonitor.IsConnected && _wasConnected)
+        {
+            _wasConnected = false;
+            StopRefreshTimer();
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    void StartRefreshTimer()
+    {
+        StopRefreshTimer();
+        _refreshTimer = new System.Threading.Timer(_ =>
+        {
+            if (Seed.HasSeed && TickMonitor.IsConnected)
+                _ = FetchBalanceAndAssets();
+        }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    void StopRefreshTimer()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
+    }
+
+    void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Seed.OnSeedChanged -= OnStateChanged;
+        TickMonitor.OnTickChanged -= OnTickChanged;
+        Vault.OnVaultChanged -= OnStateChanged;
+        StopRefreshTimer();
+    }
+}

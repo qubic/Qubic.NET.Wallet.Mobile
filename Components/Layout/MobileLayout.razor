@@ -1,0 +1,128 @@
+@inherits LayoutComponentBase
+@inject SeedSessionService Seed
+@inject TickMonitorService TickMonitor
+@inject VaultService Vault
+@inject WalletStorageService WalletStorage
+@inject TransactionTrackerService TxTracker
+@implements IDisposable
+
+<div class="qb-app">
+    <!-- Top Bar -->
+    <header class="qb-topbar">
+        <img src="qubic-icon.svg" alt="Qubic" class="qb-topbar-logo" />
+
+        <div class="qb-topbar-status">
+            @if (Seed.HasSeed)
+            {
+                <span class="badge-qb-cyan qb-wallet-badge" @onclick="ToggleWalletMenu" title="Switch wallet">
+                    @WalletDisplayName
+                    @if (Vault.IsUnlocked && Vault.Entries.Count > 1)
+                    {
+                        <i class="bi bi-chevron-down" style="font-size:0.55rem;margin-left:0.15rem"></i>
+                    }
+                </span>
+
+                @if (_showWalletMenu && Vault.IsUnlocked && Vault.Entries.Count > 1)
+                {
+                    <div class="qb-wallet-dropdown">
+                        @foreach (var entry in Vault.Entries)
+                        {
+                            var isActive = entry.Identity == Seed.Identity?.ToString();
+                            <div class="qb-wallet-dropdown-item @(isActive ? "active" : "")"
+                                 @onclick="() => SwitchToEntry(entry)">
+                                <div class="fw-bold small">@entry.Label</div>
+                                <div class="mono" style="font-size:0.6rem;color:var(--qb-text-muted)">@FormatId(entry.Identity)</div>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+            @if (Vault.IsUnlocked)
+            {
+                <span class="badge-qb-success" title="Vault unlocked"><i class="bi bi-unlock-fill"></i></span>
+            }
+            else if (Vault.VaultExists)
+            {
+                <span class="badge-qb-warning" title="Vault locked"><i class="bi bi-lock-fill"></i></span>
+            }
+
+            @if (TickMonitor.IsConnected)
+            {
+                <span class="badge-qb-success mono">E@(TickMonitor.Epoch) T@(TickMonitor.Tick)</span>
+            }
+            else
+            {
+                <span class="badge-qb-warning">Offline</span>
+            }
+        </div>
+    </header>
+
+    <!-- Page Content -->
+    <main class="qb-content" @onclick="CloseWalletMenu">
+        @Body
+    </main>
+
+    <!-- Bottom Tab Bar -->
+    <TabBar />
+</div>
+
+@code {
+    bool _showWalletMenu;
+
+    string WalletDisplayName
+    {
+        get
+        {
+            var id = Seed.Identity?.ToString();
+            var idSnippet = id != null ? $"({id[..4]}...{id[^4..]})" : "";
+            if (Seed.ActiveLabel != null)
+                return $"{Seed.ActiveLabel} {idSnippet}";
+            return idSnippet;
+        }
+    }
+
+    static string FormatId(string id) => id.Length >= 8 ? $"{id[..4]}...{id[^4..]}" : id;
+
+    void ToggleWalletMenu()
+    {
+        if (Vault.IsUnlocked && Vault.Entries.Count > 1)
+            _showWalletMenu = !_showWalletMenu;
+    }
+
+    void CloseWalletMenu()
+    {
+        if (_showWalletMenu) _showWalletMenu = false;
+    }
+
+    void SwitchToEntry(VaultEntry entry)
+    {
+        _showWalletMenu = false;
+        if (entry.Identity == Seed.Identity?.ToString()) return;
+
+        WalletStorage.ClearSeed();
+        TxTracker.ClearEncryptionKey();
+        Seed.SetSeed(entry.Seed, entry.Label);
+        WalletStorage.SetSeed(entry.Seed, entry.Identity, TickMonitor.Epoch);
+        TxTracker.SetEncryptionKey(entry.Seed);
+    }
+
+    protected override void OnInitialized()
+    {
+        TickMonitor.OnTickChanged += OnStateChanged;
+        Seed.OnSeedChanged += OnStateChanged;
+        Vault.OnVaultChanged += OnStateChanged;
+    }
+
+    void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        TickMonitor.OnTickChanged -= OnStateChanged;
+        Seed.OnSeedChanged -= OnStateChanged;
+        Vault.OnVaultChanged -= OnStateChanged;
+    }
+}
