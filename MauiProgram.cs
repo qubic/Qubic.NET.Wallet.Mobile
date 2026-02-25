@@ -3,6 +3,7 @@ using Maui.Biometric;
 using BarcodeScanning;
 using Qubic.Services;
 using Qubic.Services.Storage;
+using Qubic.Net.Wallet.Mobile.Helpers;
 
 namespace Qubic.Net.Wallet.Mobile;
 
@@ -55,5 +56,6 @@ public static class MauiProgram
         services.AddSingleton<QubicStaticService>();
         services.AddSingleton<LabelService>();
         services.AddSingleton<QrScannerService>();
+        services.AddSingleton<AssetCacheService>();
     }
 }

@@ -6,6 +6,9 @@
 @inject WalletStorageService WalletStorage
 @inject TransactionTrackerService TxTracker
 @inject NavigationManager Nav
+@inject QubicSettingsService Settings
+@inject AssetCacheService AssetCache
+@inject IJSRuntime JS
 @using Maui.Biometric
 @implements IDisposable
 
@@ -206,6 +209,8 @@ else if (!Seed.HasSeed)
 else
 {
     <!-- Dashboard — vault unlocked, seed active -->
+    <div class="pull-indicator"><i class="bi bi-arrow-clockwise pull-icon"></i></div>
+
     <div class="qb-balance">
         <div class="qb-balance-label">
             @if (Seed.ActiveLabel != null)
@@ -225,12 +230,6 @@ else
     {
         <button class="btn btn-primary w-100 mb-3" @onclick="Connect">
             <i class="bi bi-wifi me-1"></i> Connect
-        </button>
-    }
-    else
-    {
-        <button class="btn btn-outline-secondary btn-sm w-100 mb-3" @onclick="RefreshNow">
-            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
         </button>
     }
 
@@ -253,6 +252,39 @@ else
             History
         </a>
     </div>
+
+    <!-- Assets -->
+    @if (AssetCache.Assets != null && AssetCache.Assets.Count > 0)
+    {
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="fw-bold small text-muted text-uppercase" style="letter-spacing:0.05em">Assets</div>
+            <a href="/assets" class="small" style="text-decoration:none">Manage <i class="bi bi-chevron-right" style="font-size:0.6rem"></i></a>
+        </div>
+        @foreach (var asset in AssetCache.Assets)
+        {
+            <div class="card">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-bold">@asset.Name</div>
+                            <div class="mono text-muted" style="font-size:0.65rem">@asset.Issuer[..Math.Min(16, asset.Issuer.Length)]...</div>
+                        </div>
+                        <div class="fw-bold">@asset.Amount.ToString("N0")</div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+    else if (AssetCache.Assets != null && AssetCache.Assets.Count == 0)
+    {
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="fw-bold small text-muted text-uppercase" style="letter-spacing:0.05em">Assets</div>
+            <a href="/assets" class="small" style="text-decoration:none">Manage <i class="bi bi-chevron-right" style="font-size:0.6rem"></i></a>
+        </div>
+        <div class="text-center text-muted py-3 small">
+            <i class="bi bi-coin"></i> No assets found
+        </div>
+    }
 }
 
 @code {
@@ -282,6 +314,7 @@ else
     long? _balance;
     bool _wasConnected;
     System.Threading.Timer? _refreshTimer;
+    DotNetObjectReference<Home>? _selfRef;
 
     const string BiometricPasswordKey = "vault_bio_password";
 
@@ -293,9 +326,10 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        Seed.OnSeedChanged += OnStateChanged;
+        Seed.OnSeedChanged += OnSeedChanged;
         TickMonitor.OnTickChanged += OnTickChanged;
         Vault.OnVaultChanged += OnStateChanged;
+        AssetCache.OnAssetsChanged += OnStateChanged;
 
         // Check if biometric is available and a password is stored
         await CheckBiometricAvailability();
@@ -305,6 +339,22 @@ else
         {
             _ = BiometricUnlock();
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("pullRefresh.init", "qb-content", _selfRef); } catch { }
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPullRefresh()
+    {
+        await FetchBalanceAndAssets();
+        await InvokeAsync(StateHasChanged);
     }
 
     async Task CheckBiometricAvailability()
@@ -523,17 +573,16 @@ else
         await TickMonitor.StartAsync();
     }
 
-    async Task RefreshNow()
-    {
-        await FetchBalanceAndAssets();
-    }
-
     async Task FetchBalanceAndAssets()
     {
         if (Seed.Identity == null || !TickMonitor.IsConnected) return;
         try
         {
-            var info = await Backend.GetBalanceAsync(Seed.Identity.Value);
+            var balanceTask = Backend.GetBalanceAsync(Seed.Identity.Value);
+            var assetsTask = AssetCache.RefreshAsync();
+            await Task.WhenAll(balanceTask, assetsTask);
+
+            var info = await balanceTask;
             if (info != null)
                 _balance = info.Amount;
         }
@@ -573,6 +622,14 @@ else
         _refreshTimer = null;
     }
 
+    void OnSeedChanged()
+    {
+        _balance = null;
+        if (TickMonitor.IsConnected)
+            _ = FetchBalanceAndAssets();
+        InvokeAsync(StateHasChanged);
+    }
+
     void OnStateChanged()
     {
         InvokeAsync(StateHasChanged);
@@ -580,9 +637,12 @@ else
 
     public void Dispose()
     {
-        Seed.OnSeedChanged -= OnStateChanged;
+        Seed.OnSeedChanged -= OnSeedChanged;
         TickMonitor.OnTickChanged -= OnTickChanged;
         Vault.OnVaultChanged -= OnStateChanged;
+        AssetCache.OnAssetsChanged -= OnStateChanged;
         StopRefreshTimer();
+        try { _ = JS.InvokeVoidAsync("pullRefresh.dispose", "qb-content"); } catch { }
+        _selfRef?.Dispose();
     }
 }

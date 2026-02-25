@@ -15,7 +15,7 @@
 
     <!-- App identifiers -->
     <ApplicationTitle>Qubic Wallet</ApplicationTitle>
-    <ApplicationId>li.qubic.wallet</ApplicationId>
+    <ApplicationId>org.qubic.lab.wallet</ApplicationId>
     <ApplicationDisplayVersion>0.2.0</ApplicationDisplayVersion>
     <ApplicationVersion>2</ApplicationVersion>
 

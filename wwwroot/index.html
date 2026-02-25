@@ -32,6 +32,62 @@
         window.getTheme = () => {
             return document.documentElement.getAttribute('data-bs-theme') || 'dark';
         };
+
+        // Pull-to-refresh
+        window.pullRefresh = {
+            _state: {},
+            init: function (elemId, dotNetRef) {
+                const el = document.getElementById(elemId);
+                if (!el) return;
+                const s = { el, dotNetRef, startY: 0, pullDist: 0, pulling: false, threshold: 70 };
+                this._state[elemId] = s;
+                el.addEventListener('touchstart', e => this._onStart(s, e), { passive: true });
+                el.addEventListener('touchmove', e => this._onMove(s, e), { passive: false });
+                el.addEventListener('touchend', e => this._onEnd(s, e), { passive: true });
+            },
+            dispose: function (elemId) {
+                delete this._state[elemId];
+            },
+            _onStart: function (s, e) {
+                if (s.el.scrollTop <= 0) {
+                    s.startY = e.touches[0].clientY;
+                    s.pulling = true;
+                    s.pullDist = 0;
+                }
+            },
+            _onMove: function (s, e) {
+                if (!s.pulling) return;
+                const dy = e.touches[0].clientY - s.startY;
+                if (dy > 0 && s.el.scrollTop <= 0) {
+                    s.pullDist = Math.min(dy, 120);
+                    const ind = s.el.querySelector('.pull-indicator');
+                    if (ind) {
+                        ind.style.height = s.pullDist + 'px';
+                        ind.style.opacity = Math.min(s.pullDist / s.threshold, 1);
+                    }
+                    if (dy > 10) e.preventDefault();
+                } else {
+                    s.pulling = false;
+                    s.pullDist = 0;
+                    const ind = s.el.querySelector('.pull-indicator');
+                    if (ind) { ind.style.height = '0'; ind.style.opacity = '0'; }
+                }
+            },
+            _onEnd: function (s, e) {
+                if (!s.pulling) return;
+                const ind = s.el.querySelector('.pull-indicator');
+                if (s.pullDist >= s.threshold) {
+                    if (ind) ind.classList.add('refreshing');
+                    s.dotNetRef.invokeMethodAsync('OnPullRefresh').then(() => {
+                        if (ind) { ind.style.height = '0'; ind.style.opacity = '0'; ind.classList.remove('refreshing'); }
+                    });
+                } else {
+                    if (ind) { ind.style.height = '0'; ind.style.opacity = '0'; }
+                }
+                s.pulling = false;
+                s.pullDist = 0;
+            }
+        };
     </script>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
 </body>

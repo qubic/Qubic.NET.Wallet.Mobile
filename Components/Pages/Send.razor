@@ -5,6 +5,7 @@
 @inject QubicSettingsService Settings
 @inject TransactionTrackerService TxTracker
 @inject QrScannerService QrScanner
+@inject NavigationManager Nav
 
 <h4>Send QU</h4>
 
@@ -42,6 +43,11 @@ else
             {
                 <div class="alert alert-success small">
                     Transaction broadcast! <span class="mono">@_txResult[..16]...</span>
+                    <div class="mt-1">
+                        <a href="" @onclick="GoToHistory" @onclick:preventDefault>
+                            <i class="bi bi-clock-history me-1"></i>Track in History
+                        </a>
+                    </div>
                 </div>
             }
 
@@ -79,6 +85,8 @@ else
     bool _sending;
 
     bool CanSend => !_sending && _destination?.Length == 60 && _amount > 0 && TickMonitor.IsConnected;
+
+    void GoToHistory() => Nav.NavigateTo("/history");
 
     async Task ScanDestination()
     {

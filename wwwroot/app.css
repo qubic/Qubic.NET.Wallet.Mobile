@@ -369,6 +369,32 @@ h4 { font-size: 1.15rem; }
     font-size: 0.8rem;
 }
 
+/* ── Pull to Refresh ── */
+.pull-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: height 0.2s ease, opacity 0.2s ease;
+    color: var(--qb-accent-cyan);
+    font-size: 1.2rem;
+}
+
+.pull-indicator .pull-icon {
+    transition: transform 0.2s ease;
+}
+
+.pull-indicator.refreshing .pull-icon {
+    animation: ptr-spin 0.8s linear infinite;
+}
+
+@keyframes ptr-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 /* ── Scrollbar (hide on mobile) ── */
 ::-webkit-scrollbar {
     width: 0;

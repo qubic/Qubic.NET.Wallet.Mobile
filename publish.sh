@@ -19,7 +19,7 @@ fi
 
 # Read version from csproj
 VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)[^<]+' Qubic.Net.Wallet.Mobile.csproj)
-APP_ID="li.qubic.wallet"
+APP_ID="org.qubic.lab.wallet"
 APK_NAME="${APP_ID}-${VERSION}.apk"
 
 echo "Building Qubic Mobile Wallet v${VERSION}..."

@@ -5,6 +5,11 @@
 @inject TickMonitorService TickMonitor
 @inject QubicSettingsService Settings
 @inject TransactionTrackerService TxTracker
+@inject QubicStaticService StaticData
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject AssetCacheService AssetCache
+@implements IDisposable
 
 <h4>Assets</h4>
 
@@ -14,24 +19,62 @@
 }
 else
 {
-    <button class="btn btn-outline-secondary btn-sm w-100 mb-3" @onclick="LoadAssets" disabled="@_loading">
-        <i class="bi bi-arrow-clockwise me-1"></i> @(_loading ? "Loading..." : "Refresh Assets")
-    </button>
+    <div class="pull-indicator"><i class="bi bi-arrow-clockwise pull-icon"></i></div>
 
-    @if (_assets != null && _assets.Count > 0)
+    @* Open orders *@
+    @if (_myOrders != null && _myOrders.Count > 0)
     {
-        @foreach (var asset in _assets)
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <div class="fw-bold small mb-2">Your Open Orders (@_myOrders.Count)</div>
+                @foreach (var order in _myOrders)
+                {
+                    <div class="d-flex justify-content-between align-items-center py-1" style="border-bottom:1px solid var(--qb-border)">
+                        <div class="small">
+                            <span class="badge @(order.IsBid ? "bg-warning text-dark" : "bg-success")" style="font-size:0.6rem">@(order.IsBid ? "BUY" : "SELL")</span>
+                            <span class="mono ms-1">@order.AssetName</span>
+                            <span class="text-muted ms-1">@order.Shares.ToString("N0") @@ @order.Price.ToString("N0") QU</span>
+                        </div>
+                        @if (order.ConfirmCancel)
+                        {
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-danger py-0 px-1" disabled="@order.Cancelling"
+                                        @onclick="() => CancelOrder(order)">
+                                    @(order.Cancelling ? "..." : "Yes")
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                                        @onclick="() => order.ConfirmCancel = false">No</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                    @onclick="() => order.ConfirmCancel = true">×</button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (AssetCache.Assets != null && AssetCache.Assets.Count > 0)
+    {
+        @foreach (var asset in AssetCache.Assets)
         {
             var expanded = _expandedAsset == asset.Key;
-            <div class="card" @onclick="() => _expandedAsset = expanded ? null : asset.Key">
+            <div class="card" @onclick="() => ToggleAsset(asset.Key)">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
                             <div class="fw-bold">@asset.Name</div>
                             <div class="mono text-muted" style="font-size:0.7rem">@asset.Issuer[..16]...</div>
                         </div>
-                        <div class="text-end">
-                            <div class="fw-bold">@asset.Amount.ToString("N0")</div>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="text-end">
+                                <div class="fw-bold">@asset.Amount.ToString("N0")</div>
+                                <div class="small text-muted">@QubicContracts.FormatContract(asset.ManagingContractIndex)</div>
+                            </div>
+                            <i class="bi @(expanded ? "bi-chevron-up" : "bi-chevron-down") text-muted"></i>
                         </div>
                     </div>
 
@@ -42,46 +85,172 @@ else
                                 <div class="mb-1"><strong>Issuer:</strong></div>
                                 <div class="mono text-muted" style="font-size:0.65rem;word-break:break-all">@asset.Issuer</div>
                             </div>
-                            @if (asset.ManagingContract != null)
-                            {
-                                <div class="small mb-2"><strong>Contract:</strong> @asset.ManagingContract</div>
-                            }
 
-                            <!-- Transfer section -->
-                            <div class="mt-3">
-                                <div class="fw-bold small mb-2"><i class="bi bi-send me-1"></i>Transfer</div>
-                                <div class="mb-2">
-                                    <AddressInput @bind-Value="asset.TransferDest" Placeholder="Destination identity" AllowContractIndex="false" />
-                                </div>
-                                <div class="mb-2">
-                                    <input type="number" class="form-control form-control-sm"
-                                           placeholder="Amount (max @asset.Amount.ToString("N0"))"
-                                           min="1" max="@asset.Amount"
-                                           @bind="asset.TransferAmount" />
-                                </div>
-
-                                @if (asset.TransferError != null)
+                            @* Action buttons *@
+                            <div class="d-flex flex-wrap gap-1 mb-3">
+                                @if (asset.ManagingContractIndex == QxContractIndex)
                                 {
-                                    <div class="alert alert-danger small py-1">@asset.TransferError</div>
+                                    <button class="btn btn-sm btn-outline-info" @onclick="() => ShowOrderBook(asset)">
+                                        <i class="bi bi-book me-1"></i>Orders
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success" @onclick="() => SetAction(asset, ActionMode.Ask)">Sell</button>
+                                    <button class="btn btn-sm btn-outline-warning" @onclick="() => SetAction(asset, ActionMode.Bid)">Buy</button>
                                 }
-                                @if (asset.TransferSuccess != null)
-                                {
-                                    <div class="alert alert-success small py-1">@asset.TransferSuccess</div>
-                                }
-
-                                <button class="btn btn-sm btn-primary w-100"
-                                        disabled="@(!CanTransfer(asset))"
-                                        @onclick="() => TransferAsset(asset)">
-                                    @(asset.Transferring ? "Sending..." : "Send Asset")
-                                </button>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => SetAction(asset, ActionMode.Transfer)">Transfer</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => SetAction(asset, ActionMode.Rights)">Rights</button>
+                                <button class="btn btn-sm btn-outline-info" @onclick="() => GoToMsvaultDeposit(asset)">MSVAULT</button>
                             </div>
+
+                            @* Action form (shown when an action is selected for this asset) *@
+                            @if (_actionAsset?.Key == asset.Key && _actionMode != ActionMode.None)
+                            {
+                                <div class="p-2 rounded mb-2" style="background:var(--qb-bg-elevated)">
+                                    @switch (_actionMode)
+                                    {
+                                        case ActionMode.Transfer:
+                                            <div class="fw-bold small mb-2">Transfer Shares</div>
+                                            <div class="mb-2">
+                                                <AddressInput @bind-Value="_actionDest" Placeholder="Destination identity" AllowContractIndex="false" />
+                                            </div>
+                                            <div class="mb-2">
+                                                <input type="number" class="form-control form-control-sm"
+                                                       placeholder="Shares (max @asset.Amount.ToString("N0"))"
+                                                       min="1" max="@asset.Amount" @bind="_actionShares" />
+                                            </div>
+                                            <div class="small text-muted mb-2">Fee: @((_qxFees?.transfer ?? 0).ToString("N0")) QU | Shares: @_actionShares.ToString("N0")</div>
+                                            <button class="btn btn-sm btn-primary w-100" disabled="@_actionSending"
+                                                    @onclick="ExecuteTransfer">@(_actionSending ? "Transferring..." : "Transfer via QX")</button>
+                                            break;
+
+                                        case ActionMode.Ask:
+                                            <div class="fw-bold small mb-2">Sell (Ask Order)</div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">Price per Share (QU)</label>
+                                                <input type="number" class="form-control form-control-sm" min="1" @bind="_actionPrice" />
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">Shares (max @asset.Amount.ToString("N0"))</label>
+                                                <input type="number" class="form-control form-control-sm" min="1" max="@asset.Amount" @bind="_actionShares" />
+                                            </div>
+                                            <div class="small text-muted mb-2">Trade fee: @FormatTradeFee() on match</div>
+                                            <button class="btn btn-sm btn-success w-100" disabled="@_actionSending"
+                                                    @onclick="ExecuteAsk">@(_actionSending ? "Placing..." : "Place Sell Order")</button>
+                                            break;
+
+                                        case ActionMode.Bid:
+                                            <div class="fw-bold small mb-2">Buy (Bid Order)</div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">Price per Share (QU)</label>
+                                                <input type="number" class="form-control form-control-sm" min="1" @bind="_actionPrice" />
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">Number of Shares</label>
+                                                <input type="number" class="form-control form-control-sm" min="1" @bind="_actionShares" />
+                                            </div>
+                                            @if (_actionPrice > 0 && _actionShares > 0)
+                                            {
+                                                <div class="small text-muted mb-2">Total: @((_actionPrice * _actionShares).ToString("N0")) QU (escrowed) | Trade fee: @FormatTradeFee() on match</div>
+                                            }
+                                            <button class="btn btn-sm btn-warning w-100" disabled="@_actionSending"
+                                                    @onclick="ExecuteBid">@(_actionSending ? "Placing..." : "Place Buy Order")</button>
+                                            break;
+
+                                        case ActionMode.Rights:
+                                            <div class="fw-bold small mb-2">Transfer Management Rights</div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">New Managing Contract</label>
+                                                <select class="form-select form-select-sm" @bind="_actionContractIdx">
+                                                    @foreach (var c in QubicContracts.GetManagementRightsTargets())
+                                                    {
+                                                        <option value="@c.Index">@c.Name (@c.Index)</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label-sm">Shares (max @asset.Amount.ToString("N0"))</label>
+                                                <input type="number" class="form-control form-control-sm" min="1" max="@asset.Amount" @bind="_actionShares" />
+                                            </div>
+                                            <div class="small text-muted mb-2">Currently: @QubicContracts.FormatContract(asset.ManagingContractIndex)</div>
+                                            <button class="btn btn-sm btn-primary w-100" disabled="@_actionSending"
+                                                    @onclick="ExecuteRights">@(_actionSending ? "Sending..." : "Transfer Rights")</button>
+                                            break;
+
+                                        case ActionMode.OrderBook:
+                                            <div class="fw-bold small mb-2">Order Book — @asset.Name</div>
+                                            @if (_bookLoading)
+                                            {
+                                                <div class="text-muted small">Loading...</div>
+                                            }
+                                            else
+                                            {
+                                                <div class="d-flex gap-2">
+                                                    <div style="flex:1">
+                                                        <div class="small fw-bold text-danger mb-1">Asks (Sell)</div>
+                                                        @if (_bookAsks?.Count > 0)
+                                                        {
+                                                            @foreach (var ask in _bookAsks)
+                                                            {
+                                                                var a = ask;
+                                                                <div class="d-flex justify-content-between mono small py-1" style="border-bottom:1px solid var(--qb-border);cursor:pointer"
+                                                                     @onclick="() => FillBidFromAsk(a)">
+                                                                    <span>@a.Price.ToString("N0")</span>
+                                                                    <span class="text-muted">@a.Shares.ToString("N0")</span>
+                                                                </div>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="text-muted small">No asks</div>
+                                                        }
+                                                    </div>
+                                                    <div style="flex:1">
+                                                        <div class="small fw-bold text-success mb-1">Bids (Buy)</div>
+                                                        @if (_bookBids?.Count > 0)
+                                                        {
+                                                            @foreach (var bid in _bookBids)
+                                                            {
+                                                                var b = bid;
+                                                                <div class="d-flex justify-content-between mono small py-1" style="border-bottom:1px solid var(--qb-border);cursor:pointer"
+                                                                     @onclick="() => FillAskFromBid(b)">
+                                                                    <span>@b.Price.ToString("N0")</span>
+                                                                    <span class="text-muted">@b.Shares.ToString("N0")</span>
+                                                                </div>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="text-muted small">No bids</div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            }
+                                            break;
+                                    }
+
+                                    @if (_actionResult != null)
+                                    {
+                                        <div class="alert alert-success small py-1 mt-2 mb-0">
+                                            Broadcast! <span class="mono">@_actionResult[..Math.Min(16, _actionResult.Length)]...</span>
+                                            <div class="mt-1">
+                                                <a href="" @onclick="GoToHistory" @onclick:preventDefault>
+                                                    <i class="bi bi-clock-history me-1"></i>Track in History
+                                                </a>
+                                            </div>
+                                        </div>
+                                    }
+                                    @if (_actionError != null)
+                                    {
+                                        <div class="alert alert-danger small py-1 mt-2 mb-0">@_actionError</div>
+                                    }
+                                </div>
+                            }
                         </div>
                     }
                 </div>
             </div>
         }
     }
-    else if (_assets != null)
+    else if (AssetCache.Assets != null)
     {
         <div class="text-center text-muted py-4">
             <i class="bi bi-coin" style="font-size:2rem"></i>
@@ -96,26 +265,112 @@ else
 }
 
 @code {
-    class AssetEntry
-    {
-        public string Key => $"{Issuer}:{Name}";
-        public string Name { get; set; } = "";
-        public string Issuer { get; set; } = "";
-        public long Amount { get; set; }
-        public string? ManagingContract { get; set; }
+    const int QxContractIndex = 1;
 
-        // Transfer state
-        public string? TransferDest { get; set; }
-        public long? TransferAmount { get; set; }
-        public string? TransferError { get; set; }
-        public string? TransferSuccess { get; set; }
-        public bool Transferring { get; set; }
+    enum ActionMode { None, Transfer, Ask, Bid, Rights, OrderBook }
+
+    class OrderEntry
+    {
+        public string AssetName { get; set; } = "";
+        public string Issuer { get; set; } = "";
+        public byte[] IssuerPk { get; set; } = [];
+        public ulong AssetNameUlong { get; set; }
+        public long Price { get; set; }
+        public long Shares { get; set; }
+        public bool IsBid { get; set; }
+        public bool Cancelling { get; set; }
+        public bool ConfirmCancel { get; set; }
     }
 
-    List<AssetEntry>? _assets;
+    class BookEntry { public long Price; public long Shares; }
+
+    List<OrderEntry>? _myOrders;
     bool _loading;
     string? _error;
     string? _expandedAsset;
+    (uint issuance, uint transfer, uint trade)? _qxFees;
+
+    // Action state
+    ActionMode _actionMode;
+    CachedAsset? _actionAsset;
+    string? _actionDest;
+    long _actionShares;
+    long _actionPrice;
+    int _actionContractIdx;
+    bool _actionSending;
+    string? _actionResult;
+    string? _actionError;
+
+    // Order book
+    bool _bookLoading;
+    List<BookEntry>? _bookAsks;
+    List<BookEntry>? _bookBids;
+    DotNetObjectReference<Assets>? _selfRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        AssetCache.OnAssetsChanged += OnCacheChanged;
+        await LoadAssets();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("pullRefresh.init", "qb-content", _selfRef); } catch { }
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPullRefresh()
+    {
+        await LoadAssets();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    void GoToHistory() => Nav.NavigateTo("/history");
+
+    void ToggleAsset(string key)
+    {
+        if (_expandedAsset == key) { _expandedAsset = null; _actionMode = ActionMode.None; }
+        else { _expandedAsset = key; _actionMode = ActionMode.None; _actionResult = null; _actionError = null; }
+    }
+
+    void SetAction(CachedAsset asset, ActionMode mode)
+    {
+        _actionAsset = asset;
+        _actionMode = mode;
+        _actionDest = null;
+        _actionShares = 0;
+        _actionPrice = 0;
+        _actionContractIdx = QxContractIndex;
+        _actionResult = null;
+        _actionError = null;
+    }
+
+    void GoToMsvaultDeposit(CachedAsset asset)
+    {
+        Nav.NavigateTo($"/msvault?Tab=Assets&Op=deposit&Issuer={asset.Issuer}&asset={asset.Name}");
+    }
+
+    async Task LoadQxFees()
+    {
+        try
+        {
+            var result = await Backend.QuerySmartContractAsync(QxContractIndex, 1, []);
+            if (result.Length >= 12)
+                _qxFees = (BitConverter.ToUInt32(result, 0), BitConverter.ToUInt32(result, 4), BitConverter.ToUInt32(result, 8));
+        }
+        catch { }
+    }
+
+    string FormatTradeFee()
+    {
+        if (_qxFees == null) return "?";
+        var pct = _qxFees.Value.trade / 10_000_000.0;
+        return pct % 1 == 0 ? $"{pct:F0}%" : $"{pct:G}%";
+    }
 
     async Task LoadAssets()
     {
@@ -124,79 +379,289 @@ else
         _error = null;
         try
         {
-            var owned = await Backend.GetOwnedAssetsAsync(Seed.Identity.Value);
-            _assets = owned?
-                .Select(a => new AssetEntry
-                {
-                    Name = a.Data.IssuedAsset?.Name ?? "Unknown",
-                    Issuer = a.Data.IssuedAsset?.IssuerIdentity ?? a.Data.OwnerIdentity,
-                    Amount = long.TryParse(a.Data.NumberOfUnits, out var n) ? n : 0,
-                    ManagingContract = a.Data.ManagingContractIndex is > 0 ? $"#{a.Data.ManagingContractIndex}" : null
-                })
-                .ToList() ?? [];
+            var feesTask = LoadQxFees();
+            var cacheTask = AssetCache.RefreshAsync();
+            await Task.WhenAll(feesTask, cacheTask);
+            await LoadOpenOrders();
         }
-        catch (Exception ex) { _error = ex.Message; _assets = []; }
-        finally { _loading = false; }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; await InvokeAsync(StateHasChanged); }
     }
 
-    bool CanTransfer(AssetEntry asset) =>
-        !asset.Transferring
-        && asset.TransferDest?.Length == 60
-        && asset.TransferAmount is > 0
-        && asset.TransferAmount <= asset.Amount
-        && TickMonitor.IsConnected;
-
-    async Task TransferAsset(AssetEntry asset)
+    async Task LoadOpenOrders()
     {
-        asset.TransferError = null;
-        asset.TransferSuccess = null;
-        asset.Transferring = true;
+        if (Seed.Identity == null) return;
         try
         {
-            if (!QubicIdentity.TryParse(asset.TransferDest!, out var dest))
-            {
-                asset.TransferError = "Invalid identity.";
-                return;
-            }
+            var pk = Seed.Identity.Value.PublicKey;
+            var askInput = new Qubic.Core.Contracts.Qx.EntityAskOrdersInput { Entity = pk, Offset = 0 }.ToBytes();
+            var bidInput = new Qubic.Core.Contracts.Qx.EntityBidOrdersInput { Entity = pk, Offset = 0 }.ToBytes();
+            var askTask = Backend.QuerySmartContractAsync(QxContractIndex, 4, askInput);
+            var bidTask = Backend.QuerySmartContractAsync(QxContractIndex, 5, bidInput);
+            await Task.WhenAll(askTask, bidTask);
 
-            var targetTick = TickMonitor.Tick + (uint)Settings.TickOffset;
+            _myOrders = [];
+            ParseEntityOrders(await askTask, false);
+            ParseEntityOrders(await bidTask, true);
+        }
+        catch { _myOrders = null; }
+    }
 
-            // Asset transfers go through QX contract (index 1), procedure TransferShareOwnershipAndPossession
-#pragma warning disable CS0612 // Using legacy payload for cleaner API (takes QubicIdentity)
-            var payload = new Qubic.Core.Payloads.AssetTransferPayload
+    void ParseEntityOrders(byte[] data, bool isBid)
+    {
+        // EntityAskOrdersOrder / EntityBidOrdersOrder: 56 bytes each (Issuer 32 + AssetName 8 + Price 8 + Shares 8)
+        const int entrySize = 56;
+        int count = data.Length / entrySize;
+        for (int i = 0; i < count; i++)
+        {
+            var offset = i * entrySize;
+            var issuerPk = data[offset..(offset + 32)];
+            var assetNameUlong = BitConverter.ToUInt64(data, offset + 32);
+            var price = BitConverter.ToInt64(data, offset + 40);
+            var shares = BitConverter.ToInt64(data, offset + 48);
+            if (shares <= 0) continue;
+
+            var assetName = AssetNameHelper.FromUlong(assetNameUlong) ?? "?";
+            string issuer;
+            try { issuer = QubicIdentity.FromPublicKey(issuerPk).ToString(); }
+            catch { issuer = Convert.ToHexString(issuerPk[..8]); }
+
+            _myOrders!.Add(new OrderEntry
             {
-                Issuer = QubicIdentity.FromIdentity(asset.Issuer),
-                NewOwner = dest,
-                AssetName = asset.Name,
-                NumberOfShares = asset.TransferAmount!.Value
+                AssetName = assetName, Issuer = issuer, IssuerPk = issuerPk,
+                AssetNameUlong = assetNameUlong, Price = price, Shares = shares, IsBid = isBid
+            });
+        }
+    }
+
+    // ── Order Book ──
+
+    async Task ShowOrderBook(CachedAsset asset)
+    {
+        SetAction(asset, ActionMode.OrderBook);
+        _bookLoading = true;
+        _bookAsks = null;
+        _bookBids = null;
+        try
+        {
+            var issuerPk = QubicIdentity.FromIdentity(asset.Issuer.Trim()).PublicKey;
+            var assetName = AssetNameHelper.ToUlong(asset.Name);
+            var askInput = new Qubic.Core.Contracts.Qx.AssetAskOrdersInput { Issuer = issuerPk, AssetName = assetName, Offset = 0 }.ToBytes();
+            var bidInput = new Qubic.Core.Contracts.Qx.AssetBidOrdersInput { Issuer = issuerPk, AssetName = assetName, Offset = 0 }.ToBytes();
+            var askTask = Backend.QuerySmartContractAsync(QxContractIndex, 2, askInput);
+            var bidTask = Backend.QuerySmartContractAsync(QxContractIndex, 3, bidInput);
+            await Task.WhenAll(askTask, bidTask);
+
+            _bookAsks = ParseBookOrders(await askTask).OrderBy(o => o.Price).ToList();
+            _bookBids = ParseBookOrders(await bidTask).OrderByDescending(o => o.Price).ToList();
+        }
+        catch { _bookAsks = []; _bookBids = []; }
+        finally { _bookLoading = false; }
+    }
+
+    List<BookEntry> ParseBookOrders(byte[] data)
+    {
+        // AssetAskOrdersOrder / AssetBidOrdersOrder: 48 bytes each (Entity 32 + Price 8 + Shares 8)
+        const int entrySize = 48;
+        int count = data.Length / entrySize;
+        var list = new List<BookEntry>();
+        for (int i = 0; i < count; i++)
+        {
+            var offset = i * entrySize;
+            var price = BitConverter.ToInt64(data, offset + 32);
+            var shares = BitConverter.ToInt64(data, offset + 40);
+            if (shares > 0) list.Add(new BookEntry { Price = price, Shares = shares });
+        }
+        return list;
+    }
+
+    void FillBidFromAsk(BookEntry ask)
+    {
+        if (_actionAsset == null) return;
+        _actionMode = ActionMode.Bid;
+        _actionPrice = ask.Price;
+        _actionShares = ask.Shares;
+        _actionResult = null; _actionError = null;
+    }
+
+    void FillAskFromBid(BookEntry bid)
+    {
+        if (_actionAsset == null) return;
+        _actionMode = ActionMode.Ask;
+        _actionPrice = bid.Price;
+        _actionShares = Math.Min(bid.Shares, _actionAsset.Amount);
+        _actionResult = null; _actionError = null;
+    }
+
+    // ── Execute Actions ──
+
+    async Task<uint> GetTick() => TickMonitor.IsConnected
+        ? TickMonitor.Tick + (uint)Settings.TickOffset
+        : (await Backend.GetTickInfoAsync()).Tick + (uint)Settings.TickOffset;
+
+    async Task BroadcastQx(long amount, uint tick, Qubic.Core.Payloads.ITransactionPayload payload, string desc)
+    {
+        var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(QxContractIndex));
+        var tx = Seed.CreateAndSignTransaction(dest, amount, tick, payload);
+        var result = await Backend.BroadcastTransactionAsync(tx);
+        _actionResult = result.TransactionId;
+        TxTracker.Track(new TrackedTransaction
+        {
+            Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
+            Destination = dest.ToString(), Amount = amount, TargetTick = tick,
+            InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
+            Description = desc, RawData = Convert.ToHexString(tx.GetRawBytes())
+        });
+    }
+
+    async Task ExecuteTransfer()
+    {
+        if (_actionAsset == null) return;
+        _actionSending = true; _actionError = null; _actionResult = null;
+        try
+        {
+            if (_actionDest?.Length != 60 || !QubicIdentity.TryParse(_actionDest, out var destId))
+            { _actionError = "Invalid destination identity."; return; }
+            if (_actionShares <= 0 || _actionShares > _actionAsset.Amount)
+            { _actionError = "Invalid share count."; return; }
+
+            var tick = await GetTick();
+            var payload = new Qubic.Core.Contracts.Qx.TransferShareOwnershipAndPossessionPayload
+            {
+                Issuer = QubicIdentity.FromIdentity(_actionAsset.Issuer.Trim()).PublicKey,
+                NewOwnerAndPossessor = destId.PublicKey,
+                AssetName = AssetNameHelper.ToUlong(_actionAsset.Name),
+                NumberOfShares = _actionShares
             };
-#pragma warning restore CS0612
-            // QX contract address: public key with contractIndex=1 in first byte, rest zeros
-            var qxPubKey = new byte[32];
-            qxPubKey[0] = 1;
-            var qxIdentity = QubicIdentity.FromPublicKey(qxPubKey);
-            var tx = Seed.CreateAndSignTransaction(qxIdentity, 0, targetTick, payload);
-            var result = await Backend.BroadcastTransactionAsync(tx);
+            await BroadcastQx(_qxFees?.transfer ?? 0, tick, payload, $"Transfer {_actionAsset.Name}: {_actionShares:N0} shares");
+        }
+        catch (Exception ex) { _actionError = ex.Message; }
+        finally { _actionSending = false; }
+    }
 
-            if (!string.IsNullOrEmpty(result.TransactionId))
+    async Task ExecuteAsk()
+    {
+        if (_actionAsset == null) return;
+        _actionSending = true; _actionError = null; _actionResult = null;
+        try
+        {
+            if (_actionPrice <= 0) { _actionError = "Price must be positive."; return; }
+            if (_actionShares <= 0 || _actionShares > _actionAsset.Amount) { _actionError = "Invalid share count."; return; }
+
+            var tick = await GetTick();
+            var payload = new Qubic.Core.Contracts.Qx.AddToAskOrderPayload
             {
-                asset.TransferSuccess = $"Broadcast! {result.TransactionId[..16]}...";
-                TxTracker.Track(new TrackedTransaction
+                Issuer = QubicIdentity.FromIdentity(_actionAsset.Issuer.Trim()).PublicKey,
+                AssetName = AssetNameHelper.ToUlong(_actionAsset.Name),
+                Price = _actionPrice, NumberOfShares = _actionShares
+            };
+            await BroadcastQx(0, tick, payload, $"Sell {_actionAsset.Name}: {_actionShares:N0} @ {_actionPrice:N0} QU");
+        }
+        catch (Exception ex) { _actionError = ex.Message; }
+        finally { _actionSending = false; }
+    }
+
+    async Task ExecuteBid()
+    {
+        if (_actionAsset == null) return;
+        _actionSending = true; _actionError = null; _actionResult = null;
+        try
+        {
+            if (_actionPrice <= 0) { _actionError = "Price must be positive."; return; }
+            if (_actionShares <= 0) { _actionError = "Share count must be positive."; return; }
+
+            var tick = await GetTick();
+            var payload = new Qubic.Core.Contracts.Qx.AddToBidOrderPayload
+            {
+                Issuer = QubicIdentity.FromIdentity(_actionAsset.Issuer.Trim()).PublicKey,
+                AssetName = AssetNameHelper.ToUlong(_actionAsset.Name),
+                Price = _actionPrice, NumberOfShares = _actionShares
+            };
+            long amount = _actionPrice * _actionShares;
+            await BroadcastQx(amount, tick, payload, $"Buy {_actionAsset.Name}: {_actionShares:N0} @ {_actionPrice:N0} QU");
+        }
+        catch (Exception ex) { _actionError = ex.Message; }
+        finally { _actionSending = false; }
+    }
+
+    async Task ExecuteRights()
+    {
+        if (_actionAsset == null) return;
+        _actionSending = true; _actionError = null; _actionResult = null;
+        try
+        {
+            if (_actionShares <= 0 || _actionShares > _actionAsset.Amount)
+            { _actionError = "Invalid share count."; return; }
+
+            var tick = await GetTick();
+            var issuerPk = QubicIdentity.FromIdentity(_actionAsset.Issuer.Trim()).PublicKey;
+            var asset = new Qubic.Core.Contracts.QubicAsset { Issuer = issuerPk, AssetName = AssetNameHelper.ToUlong(_actionAsset.Name) };
+            var payload = QubicContracts.CreateManagementRightsPayload(
+                _actionAsset.ManagingContractIndex, asset, _actionShares, (uint)_actionContractIdx);
+            var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(_actionAsset.ManagingContractIndex));
+            var rightsFee = StaticData.GetContractFee(_actionAsset.ManagingContractIndex, "Transfer Share Management Rights") ?? 0;
+            var tx = Seed.CreateAndSignTransaction(dest, (long)rightsFee, tick, payload);
+            var result = await Backend.BroadcastTransactionAsync(tx);
+            _actionResult = result.TransactionId;
+            TxTracker.Track(new TrackedTransaction
+            {
+                Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
+                Destination = dest.ToString(), Amount = (long)rightsFee, TargetTick = tick,
+                InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
+                Description = $"Rights {_actionAsset.Name}: {_actionShares:N0} → {QubicContracts.GetContractName(_actionContractIdx) ?? $"#{_actionContractIdx}"}",
+                RawData = Convert.ToHexString(tx.GetRawBytes())
+            });
+        }
+        catch (Exception ex) { _actionError = ex.Message; }
+        finally { _actionSending = false; }
+    }
+
+    async Task CancelOrder(OrderEntry order)
+    {
+        order.Cancelling = true;
+        try
+        {
+            var tick = await GetTick();
+            Qubic.Core.Payloads.ITransactionPayload payload;
+            if (order.IsBid)
+            {
+                payload = new Qubic.Core.Contracts.Qx.RemoveFromBidOrderPayload
                 {
-                    Hash = result.TransactionId,
-                    Source = Seed.Identity?.ToString() ?? "",
-                    Destination = asset.TransferDest!,
-                    Amount = asset.TransferAmount.Value,
-                    TargetTick = targetTick,
-                    Description = $"Transfer {asset.TransferAmount.Value} {asset.Name}"
-                });
+                    Issuer = order.IssuerPk, AssetName = order.AssetNameUlong,
+                    Price = order.Price, NumberOfShares = order.Shares
+                };
             }
             else
             {
-                asset.TransferError = "Broadcast failed.";
+                payload = new Qubic.Core.Contracts.Qx.RemoveFromAskOrderPayload
+                {
+                    Issuer = order.IssuerPk, AssetName = order.AssetNameUlong,
+                    Price = order.Price, NumberOfShares = order.Shares
+                };
             }
+            var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(QxContractIndex));
+            var tx = Seed.CreateAndSignTransaction(dest, 0, tick, payload);
+            var result = await Backend.BroadcastTransactionAsync(tx);
+            TxTracker.Track(new TrackedTransaction
+            {
+                Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
+                Destination = dest.ToString(), Amount = 0, TargetTick = tick,
+                InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
+                Description = $"Cancel {(order.IsBid ? "Buy" : "Sell")} {order.AssetName}: {order.Shares:N0} @ {order.Price:N0}",
+                RawData = Convert.ToHexString(tx.GetRawBytes())
+            });
+            _myOrders?.Remove(order);
         }
-        catch (Exception ex) { asset.TransferError = ex.Message; }
-        finally { asset.Transferring = false; }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { order.Cancelling = false; }
+    }
+
+    void OnCacheChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        AssetCache.OnAssetsChanged -= OnCacheChanged;
+        try { _ = JS.InvokeVoidAsync("pullRefresh.dispose", "qb-content"); } catch { }
+        _selfRef?.Dispose();
     }
 }

@@ -1,0 +1,1042 @@
+@page "/msvault"
+@implements IDisposable
+@inject QubicBackendService Backend
+@inject SeedSessionService Seed
+@inject TickMonitorService TickMonitor
+@inject TransactionTrackerService TxTracker
+@inject QubicSettingsService Settings
+@inject WalletStorageService WalletStorage
+@inject QubicStaticService StaticData
+@inject NavigationManager Nav
+
+<h4>MSVault</h4>
+<p class="text-muted small">Multi-signature vaults: register, deposit, release, and manage assets.</p>
+
+@if (!Seed.HasSeed)
+{
+    <div class="alert alert-warning">Enter your seed on the Home page first.</div>
+}
+else
+{
+    @* Vault summaries *@
+    @if (_vaultsLoading)
+    {
+        <div class="text-muted small mb-3"><i class="bi bi-arrow-clockwise"></i> Loading your vaults...</div>
+    }
+    else if (_vaultSummaries is { Count: > 0 })
+    {
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="fw-bold small">Your Vaults (@_vaultSummaries.Count)</span>
+                    <button class="btn btn-sm btn-outline-secondary py-0" @onclick="RefreshVaults" disabled="@_vaultsLoading">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                @foreach (var v in _vaultSummaries)
+                {
+                    <div class="card mb-2">
+                        <div class="card-body py-2">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <strong class="mono">Vault #@v.Id</strong>
+                                    <span class="text-muted ms-1 small">@v.Name</span>
+                                </div>
+                                <div class="d-flex flex-wrap gap-1 justify-content-end">
+                                    <span class="badge bg-primary" style="font-size:0.65rem">@v.Balance.ToString("N0") QU</span>
+                                    @foreach (var ab in v.AssetBalances)
+                                    {
+                                        <span class="badge bg-info text-dark" style="font-size:0.65rem">@ab.Balance.ToString("N0") @ab.Name</span>
+                                    }
+                                </div>
+                            </div>
+                            <div class="small text-muted">Owners: @v.OwnerCount | Approvals: @v.RequiredApprovals</div>
+
+                            @* Pending QU releases *@
+                            @foreach (var rel in v.PendingReleases)
+                            {
+                                var vaultId = v.Id; var relAmount = rel.Amount; var relDest = rel.Destination;
+                                <div class="card mt-2 border-warning">
+                                    <div class="card-body py-2">
+                                        <div class="small d-flex align-items-center gap-1 flex-wrap">
+                                            <span class="badge @(rel.Approvals >= (int)rel.RequiredApprovals ? "bg-success" : "bg-warning text-dark")"
+                                                  style="font-size:0.6rem">@rel.Approvals/@rel.RequiredApprovals</span>
+                                            <span>Release <strong>@rel.Amount.ToString("N0") QU</strong></span>
+                                        </div>
+                                        <div class="mono text-muted mt-1" style="font-size:0.6rem;word-break:break-all">→ @rel.Destination</div>
+                                        <div class="mt-1">
+                                            @foreach (var owner in rel.ApprovedBy)
+                                            {
+                                                <div class="small d-flex align-items-center gap-1">
+                                                    <i class="bi bi-check-circle-fill text-success" style="font-size:0.7rem"></i>
+                                                    <span class="mono text-muted" style="font-size:0.55rem">@owner[..Math.Min(16, owner.Length)]...</span>
+                                                </div>
+                                            }
+                                            @foreach (var owner in rel.NotApprovedBy)
+                                            {
+                                                <div class="small d-flex align-items-center gap-1">
+                                                    <i class="bi bi-circle text-muted" style="font-size:0.7rem"></i>
+                                                    <span class="mono text-muted" style="font-size:0.55rem">@owner[..Math.Min(16, owner.Length)]...</span>
+                                                </div>
+                                            }
+                                        </div>
+                                        @if (rel.CurrentWalletCanApprove)
+                                        {
+                                            <button class="btn btn-sm btn-warning mt-1" disabled="@_sending"
+                                                    @onclick="() => ApproveRelease(vaultId, relAmount, relDest)">
+                                                <i class="bi bi-pen me-1"></i>Approve
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            @* Pending asset releases *@
+                            @foreach (var ar in v.PendingAssetReleases)
+                            {
+                                var vid = v.Id; var arIssuer = ar.Issuer; var arName = ar.AssetName;
+                                var arAmount = ar.Amount; var arDest = ar.Destination;
+                                <div class="card mt-2 border-warning">
+                                    <div class="card-body py-2">
+                                        <div class="small d-flex align-items-center gap-1 flex-wrap">
+                                            <span class="badge @(ar.Approvals >= (int)ar.RequiredApprovals ? "bg-success" : "bg-warning text-dark")"
+                                                  style="font-size:0.6rem">@ar.Approvals/@ar.RequiredApprovals</span>
+                                            <span>Release <strong>@ar.Amount.ToString("N0") @ar.AssetName</strong></span>
+                                        </div>
+                                        <div class="mono text-muted mt-1" style="font-size:0.6rem;word-break:break-all">→ @ar.Destination</div>
+                                        <div class="mt-1">
+                                            @foreach (var owner in ar.ApprovedBy)
+                                            {
+                                                <div class="small d-flex align-items-center gap-1">
+                                                    <i class="bi bi-check-circle-fill text-success" style="font-size:0.7rem"></i>
+                                                    <span class="mono text-muted" style="font-size:0.55rem">@owner[..Math.Min(16, owner.Length)]...</span>
+                                                </div>
+                                            }
+                                            @foreach (var owner in ar.NotApprovedBy)
+                                            {
+                                                <div class="small d-flex align-items-center gap-1">
+                                                    <i class="bi bi-circle text-muted" style="font-size:0.7rem"></i>
+                                                    <span class="mono text-muted" style="font-size:0.55rem">@owner[..Math.Min(16, owner.Length)]...</span>
+                                                </div>
+                                            }
+                                        </div>
+                                        @if (ar.CurrentWalletCanApprove)
+                                        {
+                                            <button class="btn btn-sm btn-warning mt-1" disabled="@_sending"
+                                                    @onclick="() => ApproveAssetRelease(vid, arIssuer, arName, arAmount, arDest)">
+                                                <i class="bi bi-pen me-1"></i>Approve
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            @if (v.DetailError != null)
+                            {
+                                <div class="small text-danger mt-1">@v.DetailError</div>
+                            }
+
+                            @* Quick actions *@
+                            <div class="d-flex flex-wrap gap-1 mt-2">
+                                <button class="btn btn-sm btn-outline-primary py-0" @onclick='() => GoToTab("Deposit", v.Id)'>Deposit</button>
+                                <button class="btn btn-sm btn-outline-warning py-0" @onclick='() => GoToTab("Release", v.Id)'>Release</button>
+                                <button class="btn btn-sm btn-outline-info py-0" @onclick='() => { _aVaultId = v.Id; _activeTab = "Assets"; }'>Assets</button>
+                                <button class="btn btn-sm btn-outline-secondary py-0" @onclick="() => GoToReset(v.Id)">Reset</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @* Tabs *@
+    <div class="d-flex flex-wrap gap-1 mb-3" style="overflow-x:auto">
+        @foreach (var tab in _tabs)
+        {
+            <button class="btn btn-sm @(tab == _activeTab ? "btn-primary" : "btn-outline-secondary")"
+                    @onclick="() => _activeTab = tab">@tab</button>
+        }
+    </div>
+
+    @switch (_activeTab)
+    {
+        case "Register":
+            <div class="card"><div class="card-body">
+                <div class="fw-bold small mb-2">Register Vault</div>
+                <div class="mb-2">
+                    <label class="form-label-sm">Vault Name</label>
+                    <input class="form-control form-control-sm" maxlength="32" @bind="_regVaultName" placeholder="My Vault..." />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label-sm">Owners (min 2, max 16)</label>
+                    @for (int idx = 0; idx < _regOwners.Count; idx++)
+                    {
+                        var i = idx;
+                        <div class="d-flex gap-1 mb-1">
+                            <span class="input-group-text input-group-sm py-0" style="font-size:0.7rem">@(i + 1)</span>
+                            <div class="flex-grow-1">
+                                <AddressInput Value="@_regOwners[i]" ValueChanged="(v) => _regOwners[i] = v" Placeholder="IDENTITY..." />
+                            </div>
+                            @if (_regOwners.Count > 2)
+                            {
+                                <button class="btn btn-outline-danger btn-sm py-0" @onclick="() => _regOwners.RemoveAt(i)">×</button>
+                            }
+                        </div>
+                    }
+                    @if (_regOwners.Count < 16)
+                    {
+                        <button class="btn btn-outline-secondary btn-sm mt-1" @onclick="() => _regOwners.Add(string.Empty)">+ Add Owner</button>
+                    }
+                </div>
+                <div class="mb-2">
+                    <label class="form-label-sm">Required Approvals (min 2)</label>
+                    <input type="number" class="form-control form-control-sm" min="2" max="@_regOwners.Count" @bind="_regApprovals" />
+                </div>
+                <button class="btn btn-primary btn-sm w-100" @onclick="RegisterVault" disabled="@_sending">
+                    @(_sending ? "Registering..." : "Register Vault")
+                </button>
+                @if (_fees != null) { <div class="form-text">Fee: @_fees.Value.register.ToString("N0") QU</div> }
+            </div></div>
+            break;
+
+        case "Deposit":
+            <div class="card"><div class="card-body">
+                <div class="fw-bold small mb-2">Deposit QU to Vault</div>
+                @VaultSelector("_depVaultId")
+                <div class="mb-2">
+                    <label class="form-label-sm">Amount (QU)</label>
+                    <input type="number" class="form-control form-control-sm" min="1" @bind="_depAmount" />
+                </div>
+                <button class="btn btn-primary btn-sm w-100" @onclick="Deposit" disabled="@_sending">
+                    @(_sending ? "Depositing..." : "Deposit")
+                </button>
+                @if (_fees != null) { <div class="form-text">Fee: @_fees.Value.deposit.ToString("N0") QU</div> }
+            </div></div>
+            break;
+
+        case "Release":
+            <div class="card"><div class="card-body">
+                <div class="fw-bold small mb-2">Release / Reset</div>
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-sm @(!_resetMode ? "btn-primary" : "btn-outline-secondary")" @onclick="() => _resetMode = false">Release To</button>
+                    <button class="btn btn-sm @(_resetMode ? "btn-primary" : "btn-outline-secondary")" @onclick="() => _resetMode = true">Reset Release</button>
+                </div>
+                @VaultSelector("_relVaultId")
+                @if (!_resetMode)
+                {
+                    <div class="mb-2">
+                        <label class="form-label-sm">Destination</label>
+                        <AddressInput @bind-Value="_relDest" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label-sm">Amount (QU)</label>
+                        <input type="number" class="form-control form-control-sm" min="0" @bind="_relAmount" />
+                    </div>
+                }
+                <button class="btn btn-primary btn-sm w-100" @onclick="ReleaseOrReset" disabled="@_sending">
+                    @(_sending ? "Sending..." : (_resetMode ? "Reset Release" : "Release To"))
+                </button>
+                @if (_fees != null)
+                {
+                    <div class="form-text">Fee: @((_resetMode ? _fees.Value.reset : _fees.Value.release).ToString("N0")) QU</div>
+                }
+            </div></div>
+            break;
+
+        case "Assets":
+            <div class="card"><div class="card-body">
+                <div class="fw-bold small mb-2">Asset Operations</div>
+                <div class="mb-2">
+                    <select class="form-select form-select-sm" @bind="_assetOp">
+                        <option value="deposit">Deposit Asset</option>
+                        <option value="release">Release Asset To</option>
+                        <option value="reset">Reset Asset Release</option>
+                        <option value="revoke">Revoke Management Rights</option>
+                    </select>
+                </div>
+                @if (_assetOp != "revoke")
+                {
+                    @VaultSelector("_aVaultId")
+                }
+                <div class="mb-2">
+                    <label class="form-label-sm">Asset Issuer</label>
+                    <AddressInput @bind-Value="_aIssuer" Placeholder="Issuer identity" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label-sm">Asset Name</label>
+                    <input class="form-control form-control-sm mono" maxlength="7" @bind="_aName" placeholder="e.g. RANDOM" />
+                </div>
+                @if (_assetOp is "deposit" or "release" or "revoke")
+                {
+                    <div class="mb-2">
+                        <label class="form-label-sm">@(_assetOp == "revoke" ? "Number of Shares" : "Amount")</label>
+                        <input type="number" class="form-control form-control-sm" min="0" @bind="_aAmount" />
+                    </div>
+                }
+                @if (_assetOp == "release")
+                {
+                    <div class="mb-2">
+                        <label class="form-label-sm">Destination</label>
+                        <AddressInput @bind-Value="_aDest" />
+                    </div>
+                }
+                <button class="btn btn-primary btn-sm w-100" @onclick="AssetOp" disabled="@_sending">
+                    @(_sending ? "Sending..." : "Submit")
+                </button>
+            </div></div>
+            break;
+
+        case "Query":
+            <div class="card"><div class="card-body">
+                <div class="fw-bold small mb-2">Query MSVault</div>
+                <div class="mb-2">
+                    <select class="form-select form-select-sm" @bind="_queryFunc">
+                        <option value="5">Get Vaults (by owner)</option>
+                        <option value="7">Get Balance</option>
+                        <option value="8">Get Vault Name</option>
+                        <option value="11">Get Vault Owners</option>
+                        <option value="6">Get Release Status</option>
+                        <option value="12">Is Shareholder</option>
+                        <option value="10">Get Fees</option>
+                    </select>
+                </div>
+                @if (_queryFunc is 5 or 12)
+                {
+                    <div class="mb-2">
+                        <label class="form-label-sm">Identity</label>
+                        <AddressInput @bind-Value="_qIdentity" />
+                    </div>
+                }
+                @if (_queryFunc is 6 or 7 or 8 or 11)
+                {
+                    <div class="mb-2">
+                        <label class="form-label-sm">Vault ID</label>
+                        <input type="number" class="form-control form-control-sm" min="0" @bind="_qVaultId" />
+                    </div>
+                }
+                <button class="btn btn-primary btn-sm w-100" @onclick="RunQuery" disabled="@_querying">
+                    @(_querying ? "Querying..." : "Query")
+                </button>
+                @if (_queryResult != null)
+                {
+                    <div class="mt-2">
+                        @foreach (var kv in _queryResult)
+                        {
+                            <div class="d-flex justify-content-between small py-1" style="border-bottom:1px solid var(--qb-border)">
+                                <span class="text-muted">@kv.Key</span>
+                                <span class="mono" style="font-size:0.65rem;word-break:break-all;text-align:right;max-width:60%">@kv.Value</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div></div>
+            break;
+    }
+
+    @if (_result != null)
+    {
+        <div class="alert alert-success small mt-2">
+            Broadcast! <span class="mono">@_result[..Math.Min(16, _result.Length)]...</span>
+            <div class="mt-1">
+                <a href="" @onclick='() => Nav.NavigateTo("/history")' @onclick:preventDefault>
+                    <i class="bi bi-clock-history me-1"></i>Track in History
+                </a>
+            </div>
+        </div>
+    }
+    @if (_error != null) { <div class="alert alert-danger small mt-2">@_error</div> }
+}
+
+<ConfirmModal Visible="@(_confirmMsg != null)" Title="@(_confirmTitle ?? "Confirm")"
+             Message="@(_confirmMsg ?? "")" ConfirmText="@(_confirmBtn ?? "Confirm")"
+             OnConfirm="OnConfirmed" OnCancel="OnCancelled" />
+
+@code {
+    [SupplyParameterFromQuery] public string? Tab { get; set; }
+    [SupplyParameterFromQuery] public string? Op { get; set; }
+    [SupplyParameterFromQuery(Name = "vault")] public long? QVaultId { get; set; }
+    [SupplyParameterFromQuery] public string? Issuer { get; set; }
+    [SupplyParameterFromQuery(Name = "asset")] public string? AssetName { get; set; }
+
+    string[] _tabs = ["Register", "Deposit", "Release", "Assets", "Query"];
+    string _activeTab = "Deposit";
+    bool _sending;
+    string? _result;
+    string? _error;
+    const int ContractIndex = 11;
+    (ulong register, ulong release, ulong reset, ulong holding, ulong deposit, ulong burn)? _fees;
+
+    // Confirm modal
+    string? _confirmTitle; string? _confirmMsg; string? _confirmBtn;
+    Func<Task>? _confirmAction;
+
+    void ShowConfirm(string title, string msg, string btn, Func<Task> action)
+    { _confirmTitle = title; _confirmMsg = msg; _confirmBtn = btn; _confirmAction = action; }
+
+    async Task OnConfirmed()
+    { var a = _confirmAction; _confirmMsg = null; _confirmAction = null; if (a != null) await a(); }
+
+    void OnCancelled() { _confirmMsg = null; _confirmAction = null; _sending = false; }
+
+    // Vault summaries
+    bool _vaultsLoading;
+    List<VaultSummary>? _vaultSummaries;
+
+    record ReleaseRequest(ulong Amount, string Destination, int Approvals, ulong RequiredApprovals,
+        string[] ApprovedBy, string[] NotApprovedBy, bool CurrentWalletCanApprove);
+    record AssetBalance(string Issuer, string Name, ulong Balance);
+    record AssetReleaseRequest(string Issuer, string AssetName, ulong Amount, string Destination,
+        int Approvals, ulong RequiredApprovals, string[] ApprovedBy, string[] NotApprovedBy, bool CurrentWalletCanApprove);
+    record VaultSummary(ulong Id, string Name, long Balance, int OwnerCount, ulong RequiredApprovals,
+        string[] OwnerIdentities, List<ReleaseRequest> PendingReleases, List<AssetBalance> AssetBalances,
+        List<AssetReleaseRequest> PendingAssetReleases, string? DetailError);
+
+    // Form fields
+    string _regVaultName = ""; ulong _regApprovals = 2; List<string> _regOwners = null!;
+    ulong _depVaultId; long _depAmount;
+    bool _resetMode; ulong _relVaultId; string _relDest = ""; ulong _relAmount;
+    string _assetOp = "deposit"; ulong _aVaultId;
+    string _aIssuer = ""; string _aName = ""; long _aAmount; string _aDest = "";
+    int _queryFunc = 5; string? _qIdentity; ulong _qVaultId; bool _querying;
+    List<KeyValuePair<string, string>>? _queryResult;
+
+    RenderFragment VaultSelector(string _field) =>
+        @<div class="mb-2">
+            <label class="form-label-sm">Vault</label>
+            @if (_vaultSummaries is { Count: > 0 })
+            {
+                <select class="form-select form-select-sm mb-1" @onchange="e => SetVaultId(_field, e)">
+                    @foreach (var vs in _vaultSummaries)
+                    {
+                        <option value="@vs.Id" selected="@IsSelectedVault(_field, vs.Id)">#@vs.Id — @vs.Name</option>
+                    }
+                </select>
+            }
+            <input type="number" class="form-control form-control-sm" min="0" value="@GetVaultId(_field)"
+                   @onchange="e => SetVaultId(_field, e)" placeholder="Or enter vault ID" />
+        </div>;
+
+    ulong GetVaultId(string field) => field switch
+    {
+        "_depVaultId" => _depVaultId, "_relVaultId" => _relVaultId, "_aVaultId" => _aVaultId, _ => 0
+    };
+
+    bool IsSelectedVault(string field, ulong id) => GetVaultId(field) == id;
+
+    void SetVaultId(string field, ChangeEventArgs e)
+    {
+        if (ulong.TryParse(e.Value?.ToString(), out var id))
+        {
+            switch (field) { case "_depVaultId": _depVaultId = id; break; case "_relVaultId": _relVaultId = id; break; case "_aVaultId": _aVaultId = id; break; }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        TxTracker.OnChanged += OnTrackerChanged;
+        if (!string.IsNullOrEmpty(Tab)) _activeTab = Tab;
+        if (!string.IsNullOrEmpty(Op)) _assetOp = Op;
+        if (QVaultId.HasValue) _aVaultId = (ulong)QVaultId.Value;
+        if (!string.IsNullOrEmpty(Issuer)) _aIssuer = Issuer;
+        if (!string.IsNullOrEmpty(AssetName)) _aName = AssetName;
+
+        var myId = Seed.HasSeed ? Seed.Identity?.ToString() ?? "" : "";
+        _regOwners = [myId, ""];
+
+        try
+        {
+            var result = await Backend.QuerySmartContractAsync(ContractIndex, 10, []);
+            if (result.Length >= 48)
+                _fees = (BitConverter.ToUInt64(result, 0), BitConverter.ToUInt64(result, 8),
+                         BitConverter.ToUInt64(result, 16), BitConverter.ToUInt64(result, 24),
+                         BitConverter.ToUInt64(result, 32), BitConverter.ToUInt64(result, 40));
+        }
+        catch { }
+
+        await LoadVaults();
+
+        if (_vaultSummaries is { Count: > 0 })
+        {
+            var firstId = _vaultSummaries[0].Id;
+            if (!QVaultId.HasValue) { _depVaultId = firstId; _relVaultId = firstId; _aVaultId = firstId; }
+        }
+    }
+
+    void GoToTab(string tab, ulong vaultId)
+    {
+        _activeTab = tab;
+        switch (tab) { case "Deposit": _depVaultId = vaultId; break; case "Release": _relVaultId = vaultId; _resetMode = false; break; }
+    }
+
+    void GoToReset(ulong vaultId) { _relVaultId = vaultId; _resetMode = true; _activeTab = "Release"; }
+
+    async Task RefreshVaults() => await LoadVaults();
+
+    async Task<uint> GetTick() => TickMonitor.IsConnected
+        ? TickMonitor.Tick + (uint)Settings.TickOffset
+        : (await Backend.GetTickInfoAsync()).Tick + (uint)Settings.TickOffset;
+
+    async Task Broadcast(long amount, uint tick, Qubic.Core.Payloads.ITransactionPayload payload, string desc)
+    {
+        var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(ContractIndex));
+        var tx = Seed.CreateAndSignTransaction(dest, amount, tick, payload);
+        var result = await Backend.BroadcastTransactionAsync(tx);
+        _result = result.TransactionId;
+        TxTracker.Track(new TrackedTransaction
+        {
+            Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
+            Destination = dest.ToString(), Amount = amount, TargetTick = tick,
+            InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
+            Description = desc, RawData = Convert.ToHexString(tx.GetRawBytes())
+        });
+    }
+
+    // ── Load vaults ──
+
+    async Task LoadVaults()
+    {
+        if (!Seed.HasSeed || Seed.Identity == null) return;
+        _vaultsLoading = true;
+        StateHasChanged();
+        try
+        {
+            var pk = Seed.Identity.Value.PublicKey;
+            var input = new Qubic.Core.Contracts.Msvault.GetVaultsInput { PublicKey = pk }.ToBytes();
+            var data = await Backend.QuerySmartContractAsync(ContractIndex, 5, input);
+            if (data.Length < 328) { _vaultSummaries = null; return; }
+
+            var gv = Qubic.Core.Contracts.Msvault.GetVaultsOutput.FromBytes(data);
+            var count = (int)Math.Min(gv.NumberOfVaults, 8);
+            if (count == 0) { _vaultSummaries = null; return; }
+
+            var summaries = new List<VaultSummary>();
+            for (int vi = 0; vi < count; vi++)
+            {
+                var vaultId = gv.VaultIds[vi];
+                var name = FormatVaultName(gv.VaultNames[vi]);
+                long balance = 0; int ownerCount = 0; ulong reqApprovals = 0;
+                string[] ownerIdentities = [];
+                var pendingReleases = new List<ReleaseRequest>();
+                var assetBalances = new List<AssetBalance>();
+                var pendingAssetReleases = new List<AssetReleaseRequest>();
+                string? detailError = null;
+
+                try
+                {
+                    // Balance
+                    var balData = await Backend.QuerySmartContractAsync(ContractIndex, 7,
+                        new Qubic.Core.Contracts.Msvault.GetBalanceOfInput { VaultId = vaultId }.ToBytes());
+                    if (balData.Length >= 16)
+                    {
+                        var bo = Qubic.Core.Contracts.Msvault.GetBalanceOfOutput.FromBytes(balData);
+                        if (bo.Status == 1) balance = bo.Balance;
+                    }
+
+                    // Owners
+                    var ownData = await Backend.QuerySmartContractAsync(ContractIndex, 11,
+                        new Qubic.Core.Contracts.Msvault.GetVaultOwnersInput { VaultId = vaultId }.ToBytes());
+                    if (ownData.Length >= 536)
+                    {
+                        var oo = Qubic.Core.Contracts.Msvault.GetVaultOwnersOutput.FromBytes(ownData);
+                        if (oo.Status == 1)
+                        {
+                            ownerCount = (int)Math.Min(oo.NumberOfOwners, 16);
+                            reqApprovals = oo.RequiredApprovals;
+                            ownerIdentities = oo.Owners.Take(ownerCount).Select(PkToIdentity).ToArray();
+                        }
+                    }
+
+                    // Release status
+                    var relData = await Backend.QuerySmartContractAsync(ContractIndex, 6,
+                        new Qubic.Core.Contracts.Msvault.GetReleaseStatusInput { VaultId = vaultId }.ToBytes());
+                    if (relData.Length >= 648)
+                    {
+                        var ro = Qubic.Core.Contracts.Msvault.GetReleaseStatusOutput.FromBytes(relData);
+                        if (ro.Status == 1)
+                        {
+                            var myId = Seed.Identity?.ToString() ?? "";
+                            var requests = new Dictionary<(ulong amount, string dest), List<string>>();
+                            for (int oi = 0; oi < ownerCount; oi++)
+                            {
+                                if (ro.Amounts[oi] > 0)
+                                {
+                                    var dest = PkToIdentity(ro.Destinations[oi]);
+                                    var key = (ro.Amounts[oi], dest);
+                                    if (!requests.ContainsKey(key)) requests[key] = new();
+                                    requests[key].Add(ownerIdentities.Length > oi ? ownerIdentities[oi] : $"Owner #{oi}");
+                                }
+                            }
+                            foreach (var kv in requests)
+                            {
+                                var approved = kv.Value.ToArray();
+                                var notApproved = ownerIdentities.Where(o => !approved.Contains(o)).ToArray();
+                                var canApprove = !string.IsNullOrEmpty(myId)
+                                    && ownerIdentities.Contains(myId) && !approved.Contains(myId);
+                                pendingReleases.Add(new ReleaseRequest(kv.Key.amount, kv.Key.dest,
+                                    approved.Length, reqApprovals, approved, notApproved, canApprove));
+                            }
+                        }
+                    }
+
+                    // Asset balances
+                    var abData = await Backend.QuerySmartContractAsync(ContractIndex, 22,
+                        new Qubic.Core.Contracts.Msvault.GetVaultAssetBalancesInput { VaultId = vaultId }.ToBytes());
+                    if (abData.Length >= 400)
+                    {
+                        var ab = Qubic.Core.Contracts.Msvault.GetVaultAssetBalancesOutput.FromBytes(abData);
+                        if (ab.Status == 1)
+                        {
+                            for (int ai = 0; ai < (int)Math.Min(ab.NumberOfAssetTypes, 8); ai++)
+                            {
+                                var e = ab.AssetBalances[ai];
+                                if (e.Balance > 0)
+                                {
+                                    var issuer = PkToIdentity(e.Asset.Issuer);
+                                    var aName = AssetNameHelper.FromUlong(e.Asset.AssetName) ?? "?";
+                                    assetBalances.Add(new AssetBalance(issuer, aName, e.Balance));
+                                }
+                            }
+                        }
+                    }
+
+                    // Asset release status
+                    var arData = await Backend.QuerySmartContractAsync(ContractIndex, 23,
+                        new Qubic.Core.Contracts.Msvault.GetAssetReleaseStatusInput { VaultId = vaultId }.ToBytes());
+                    if (arData.Length >= 1288)
+                    {
+                        var ar = Qubic.Core.Contracts.Msvault.GetAssetReleaseStatusOutput.FromBytes(arData);
+                        if (ar.Status == 1)
+                        {
+                            var myId2 = Seed.Identity?.ToString() ?? "";
+                            var arReqs = new Dictionary<(string issuer, string aname, ulong amount, string dest), List<string>>();
+                            for (int oi = 0; oi < ownerCount; oi++)
+                            {
+                                if (ar.Amounts[oi] > 0)
+                                {
+                                    var issuer = PkToIdentity(ar.Assets[oi].Issuer);
+                                    var aname = AssetNameHelper.FromUlong(ar.Assets[oi].AssetName) ?? "?";
+                                    var dest = PkToIdentity(ar.Destinations[oi]);
+                                    var key = (issuer, aname, ar.Amounts[oi], dest);
+                                    if (!arReqs.ContainsKey(key)) arReqs[key] = new();
+                                    arReqs[key].Add(ownerIdentities.Length > oi ? ownerIdentities[oi] : $"Owner #{oi}");
+                                }
+                            }
+                            foreach (var kv in arReqs)
+                            {
+                                var approved = kv.Value.ToArray();
+                                var notApproved = ownerIdentities.Where(o => !approved.Contains(o)).ToArray();
+                                var canApprove = !string.IsNullOrEmpty(myId2)
+                                    && ownerIdentities.Contains(myId2) && !approved.Contains(myId2);
+                                pendingAssetReleases.Add(new AssetReleaseRequest(kv.Key.issuer, kv.Key.aname,
+                                    kv.Key.amount, kv.Key.dest, approved.Length, reqApprovals, approved, notApproved, canApprove));
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex) { detailError = ex.Message; }
+
+                summaries.Add(new VaultSummary(vaultId, name, balance, ownerCount, reqApprovals,
+                    ownerIdentities, pendingReleases, assetBalances, pendingAssetReleases, detailError));
+            }
+            _vaultSummaries = summaries;
+        }
+        catch { _vaultSummaries = null; }
+        finally { _vaultsLoading = false; }
+    }
+
+    // ── Operations ──
+
+    void RegisterVault()
+    {
+        _error = null; _result = null;
+        if (_fees == null) { _error = "Fees not loaded yet."; return; }
+        if (string.IsNullOrWhiteSpace(_regVaultName)) { _error = "Vault name required."; return; }
+        var nameBytes = new byte[32];
+        var utf8 = System.Text.Encoding.UTF8.GetBytes(_regVaultName.Trim());
+        if (utf8.Length > 32) { _error = "Name too long (max 32 bytes)."; return; }
+        utf8.CopyTo(nameBytes, 0);
+
+        var ownerPks = new List<byte[]>();
+        for (int i = 0; i < _regOwners.Count; i++)
+        {
+            if (string.IsNullOrWhiteSpace(_regOwners[i])) { _error = $"Owner #{i + 1}: identity required."; return; }
+            if (!QubicIdentity.TryParse(_regOwners[i].Trim(), out var id)) { _error = $"Owner #{i + 1}: invalid identity."; return; }
+            ownerPks.Add(id.PublicKey);
+        }
+        if (ownerPks.Count < 2) { _error = "At least 2 owners required."; return; }
+        if (_regApprovals < 2 || _regApprovals > (ulong)ownerPks.Count) { _error = $"Approvals must be 2-{ownerPks.Count}."; return; }
+
+        ShowConfirm("Register Vault",
+            $"Register \"{_regVaultName.Trim()}\" with {ownerPks.Count} owners, {_regApprovals} approvals?\nFee: {_fees.Value.register:N0} QU",
+            "Register", async () =>
+        {
+            _sending = true;
+            try
+            {
+                var tick = await GetTick();
+                var payload = new Qubic.Core.Contracts.Msvault.RegisterVaultPayload
+                    { VaultName = nameBytes, Owners = ownerPks.ToArray(), RequiredApprovals = _regApprovals };
+                await Broadcast((long)_fees!.Value.register, tick, payload,
+                    $"MSVault Register: {ownerPks.Count} owners, approvals={_regApprovals}");
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            finally { _sending = false; }
+        });
+    }
+
+    void Deposit()
+    {
+        _error = null; _result = null;
+        if (_depAmount <= 0) { _error = "Amount must be positive."; return; }
+        var vaultId = _depVaultId; var amount = _depAmount;
+        ShowConfirm("Deposit", $"Deposit {amount:N0} QU to vault #{vaultId}?", "Deposit", async () =>
+        {
+            _sending = true;
+            try
+            {
+                var tick = await GetTick();
+                var payload = new Qubic.Core.Contracts.Msvault.DepositPayload { VaultId = vaultId };
+                await Broadcast(amount, tick, payload, $"MSVault Deposit: vault {vaultId}, {amount:N0} QU");
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            finally { _sending = false; }
+        });
+    }
+
+    void ReleaseOrReset()
+    {
+        _error = null; _result = null;
+        if (_fees == null) { _error = "Fees not loaded yet."; return; }
+        var vaultId = _relVaultId;
+        if (_resetMode)
+        {
+            var fee = (long)_fees.Value.reset;
+            ShowConfirm("Reset Release", $"Reset all pending releases for vault #{vaultId}?\nFee: {fee:N0} QU", "Reset", async () =>
+            {
+                _sending = true;
+                try
+                {
+                    var tick = await GetTick();
+                    await Broadcast(fee, tick, new Qubic.Core.Contracts.Msvault.ResetReleasePayload { VaultId = vaultId },
+                        $"MSVault Reset Release: vault {vaultId}");
+                }
+                catch (Exception ex) { _error = ex.Message; }
+                finally { _sending = false; }
+            });
+        }
+        else
+        {
+            if (!QubicIdentity.TryParse(_relDest.Trim(), out _)) { _error = "Invalid destination."; return; }
+            var dest = _relDest.Trim(); var amount = _relAmount; var fee = (long)_fees.Value.release;
+            ShowConfirm("Release", $"Release {amount:N0} QU from vault #{vaultId}?\nFee: {fee:N0} QU", "Release", async () =>
+            {
+                _sending = true;
+                try
+                {
+                    var tick = await GetTick();
+                    var payload = new Qubic.Core.Contracts.Msvault.ReleaseToPayload
+                    {
+                        VaultId = vaultId, Amount = amount,
+                        Destination = QubicIdentity.FromIdentity(dest).PublicKey
+                    };
+                    await Broadcast(fee, tick, payload, $"MSVault Release: vault {vaultId}, {amount:N0} QU");
+                }
+                catch (Exception ex) { _error = ex.Message; }
+                finally { _sending = false; }
+            });
+        }
+    }
+
+    void ApproveRelease(ulong vaultId, ulong amount, string destination)
+    {
+        if (_fees == null) { _error = "Fees not loaded."; return; }
+        _error = null; _result = null;
+        var fee = (long)_fees.Value.release;
+        ShowConfirm("Approve Release",
+            $"Approve release of {amount:N0} QU from vault #{vaultId}?\nFee: {fee:N0} QU", "Approve", async () =>
+        {
+            _sending = true;
+            try
+            {
+                var tick = await GetTick();
+                var payload = new Qubic.Core.Contracts.Msvault.ReleaseToPayload
+                {
+                    VaultId = vaultId, Amount = amount,
+                    Destination = QubicIdentity.FromIdentity(destination).PublicKey
+                };
+                await Broadcast(fee, tick, payload, $"MSVault Approve Release: vault {vaultId}, {amount:N0} QU");
+                await LoadVaults();
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            finally { _sending = false; }
+        });
+    }
+
+    void ApproveAssetRelease(ulong vaultId, string issuer, string assetName, ulong amount, string destination)
+    {
+        if (_fees == null) { _error = "Fees not loaded."; return; }
+        _error = null; _result = null;
+        var fee = (long)_fees.Value.release;
+        ShowConfirm("Approve Asset Release",
+            $"Approve release of {amount:N0} {assetName} from vault #{vaultId}?\nFee: {fee:N0} QU", "Approve", async () =>
+        {
+            _sending = true;
+            try
+            {
+                var tick = await GetTick();
+                var asset = new Qubic.Core.Contracts.QubicAsset
+                {
+                    Issuer = QubicIdentity.FromIdentity(issuer).PublicKey,
+                    AssetName = AssetNameHelper.ToUlong(assetName)
+                };
+                var payload = new Qubic.Core.Contracts.Msvault.ReleaseAssetToPayload
+                {
+                    VaultId = vaultId, Asset = asset, Amount = amount,
+                    Destination = QubicIdentity.FromIdentity(destination).PublicKey
+                };
+                await Broadcast(fee, tick, payload, $"MSVault Approve Asset Release: vault {vaultId}, {assetName} x{amount}");
+                await LoadVaults();
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            finally { _sending = false; }
+        });
+    }
+
+    async Task AssetOp()
+    {
+        _error = null; _result = null;
+        if (_fees == null) { _error = "Fees not loaded."; return; }
+        if (!QubicIdentity.TryParse(_aIssuer.Trim(), out _)) { _error = "Invalid asset issuer."; return; }
+        if (string.IsNullOrWhiteSpace(_aName)) { _error = "Asset name required."; return; }
+        if (_assetOp == "release" && !QubicIdentity.TryParse(_aDest.Trim(), out _)) { _error = "Invalid destination."; return; }
+
+        // For deposit, check if management rights need to be transferred
+        int managingContract = QubicContracts.Qx;
+        ulong rightsFee = 0;
+        bool transferRights = false;
+        if (_assetOp == "deposit" && Seed.HasSeed && Seed.Identity != null)
+        {
+            try
+            {
+                var assets = await Backend.GetOwnedAssetsAsync(Seed.Identity.Value);
+                var match = assets.FirstOrDefault(a =>
+                    a.Data.IssuedAsset?.IssuerIdentity == _aIssuer.Trim()
+                    && a.Data.IssuedAsset?.Name == _aName.Trim());
+                if (match == null) { _error = "Asset not found in your owned assets."; return; }
+
+                managingContract = (int)match.Data.ManagingContractIndex;
+                if (managingContract == ContractIndex)
+                    transferRights = false;
+                else if (!QubicContracts.SupportsManagementRightsTransfer(managingContract))
+                {
+                    _error = $"Asset managed by {QubicContracts.FormatContract(managingContract)} — rights transfer not supported.";
+                    return;
+                }
+                else
+                {
+                    transferRights = true;
+                    rightsFee = StaticData.GetContractFee(managingContract, "Transfer Share Management Rights") ?? 0;
+                }
+            }
+            catch (Exception ex) { _error = $"Failed to look up asset: {ex.Message}"; return; }
+        }
+
+        var issuerPk = QubicIdentity.FromIdentity(_aIssuer.Trim()).PublicKey;
+        var assetNameUlong = AssetNameHelper.ToUlong(_aName.Trim());
+        var asset = new Qubic.Core.Contracts.QubicAsset { Issuer = issuerPk, AssetName = assetNameUlong };
+        var op = _assetOp; var vaultId = _aVaultId; var amount = (ulong)_aAmount; var name = _aName.Trim();
+        var dest = _assetOp == "release" ? _aDest.Trim() : "";
+        var doTransferRights = transferRights; var mgmtContract = managingContract; var mgmtFee = rightsFee;
+
+        string confirmMsg = op switch
+        {
+            "deposit" when doTransferRights => $"Deposit {amount:N0} {name} to vault #{vaultId}?\n2 transactions: rights transfer{(mgmtFee > 0 ? $" ({mgmtFee:N0} QU)" : "")} + deposit ({_fees.Value.deposit:N0} QU)",
+            "deposit" => $"Deposit {amount:N0} {name} to vault #{vaultId}?\nFee: {_fees.Value.deposit:N0} QU",
+            "release" => $"Release {amount:N0} {name} from vault #{vaultId}?\nFee: {_fees.Value.release:N0} QU",
+            "reset" => $"Reset asset releases for vault #{vaultId}?\nFee: {_fees.Value.reset:N0} QU",
+            "revoke" => $"Revoke rights for {amount:N0} {name} shares?\nFee: 100 QU",
+            _ => "Proceed?"
+        };
+
+        ShowConfirm("Asset Operation", confirmMsg, "Confirm", async () =>
+        {
+            _sending = true;
+            try
+            {
+                var tick = await GetTick();
+                switch (op)
+                {
+                    case "deposit":
+                        if (doTransferRights)
+                        {
+                            var rightsPayload = QubicContracts.CreateManagementRightsPayload(mgmtContract, asset, (long)amount, ContractIndex);
+                            var rightsDest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(mgmtContract));
+                            var rightsTx = Seed.CreateAndSignTransaction(rightsDest, (long)mgmtFee, tick, rightsPayload);
+                            var rightsResult = await Backend.BroadcastTransactionAsync(rightsTx);
+                            TxTracker.Track(new TrackedTransaction
+                            {
+                                Hash = rightsResult.TransactionId, Source = Seed.Identity?.ToString() ?? "",
+                                Destination = rightsDest.ToString(), Amount = (long)mgmtFee, TargetTick = tick,
+                                InputType = rightsPayload.InputType, PayloadHex = Convert.ToHexString(rightsPayload.GetPayloadBytes()),
+                                Description = $"Transfer Rights {name} x{amount} → MSVault",
+                                RawData = Convert.ToHexString(rightsTx.GetRawBytes())
+                            });
+                            tick += 1;
+                        }
+                        var dp = new Qubic.Core.Contracts.Msvault.DepositAssetPayload { VaultId = vaultId, Asset = asset, Amount = amount };
+                        await Broadcast((long)_fees!.Value.deposit, tick, dp, $"MSVault Deposit Asset: vault {vaultId}, {name} x{amount}");
+                        break;
+                    case "release":
+                        var rp = new Qubic.Core.Contracts.Msvault.ReleaseAssetToPayload
+                        {
+                            VaultId = vaultId, Asset = asset, Amount = amount,
+                            Destination = QubicIdentity.FromIdentity(dest).PublicKey
+                        };
+                        await Broadcast((long)_fees!.Value.release, tick, rp, $"MSVault Release Asset: vault {vaultId}, {name} x{amount}");
+                        break;
+                    case "reset":
+                        await Broadcast((long)_fees!.Value.reset, tick,
+                            new Qubic.Core.Contracts.Msvault.ResetAssetReleasePayload { VaultId = vaultId },
+                            $"MSVault Reset Asset Release: vault {vaultId}");
+                        break;
+                    case "revoke":
+                        var rvp = new Qubic.Core.Contracts.Msvault.RevokeAssetManagementRightsPayload { Asset = asset, NumberOfShares = (long)amount };
+                        await Broadcast(100, tick, rvp, $"MSVault Revoke Mgmt Rights: {name} x{amount}");
+                        break;
+                }
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            finally { _sending = false; }
+        });
+    }
+
+    // ── Query ──
+
+    async Task RunQuery()
+    {
+        _querying = true; _error = null; _queryResult = null;
+        try
+        {
+            byte[] input = _queryFunc switch
+            {
+                5 => new Qubic.Core.Contracts.Msvault.GetVaultsInput { PublicKey = GetQueryPk() }.ToBytes(),
+                6 => new Qubic.Core.Contracts.Msvault.GetReleaseStatusInput { VaultId = _qVaultId }.ToBytes(),
+                7 => new Qubic.Core.Contracts.Msvault.GetBalanceOfInput { VaultId = _qVaultId }.ToBytes(),
+                8 => new Qubic.Core.Contracts.Msvault.GetVaultNameInput { VaultId = _qVaultId }.ToBytes(),
+                10 => [],
+                11 => new Qubic.Core.Contracts.Msvault.GetVaultOwnersInput { VaultId = _qVaultId }.ToBytes(),
+                12 => new Qubic.Core.Contracts.Msvault.IsShareHolderInput { Candidate = GetQueryPk() }.ToBytes(),
+                _ => throw new Exception("Unknown query")
+            };
+            var result = await Backend.QuerySmartContractAsync(ContractIndex, (uint)_queryFunc, input);
+            _queryResult = ParseResult(_queryFunc, result);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _querying = false; }
+    }
+
+    byte[] GetQueryPk()
+    {
+        if (string.IsNullOrWhiteSpace(_qIdentity) || !QubicIdentity.TryParse(_qIdentity.Trim(), out var id))
+            throw new Exception("Invalid identity.");
+        return id.PublicKey;
+    }
+
+    List<KeyValuePair<string, string>> ParseResult(int func, byte[] data)
+    {
+        var list = new List<KeyValuePair<string, string>>();
+        switch (func)
+        {
+            case 5 when data.Length >= 328:
+                var gv = Qubic.Core.Contracts.Msvault.GetVaultsOutput.FromBytes(data);
+                list.Add(new("Vaults", gv.NumberOfVaults.ToString()));
+                for (int i = 0; i < (int)Math.Min(gv.NumberOfVaults, 8); i++)
+                {
+                    list.Add(new($"ID #{i + 1}", gv.VaultIds[i].ToString()));
+                    list.Add(new($"Name #{i + 1}", FormatVaultName(gv.VaultNames[i])));
+                }
+                break;
+            case 6 when data.Length >= 648:
+                var rs = Qubic.Core.Contracts.Msvault.GetReleaseStatusOutput.FromBytes(data);
+                list.Add(new("Status", rs.Status.ToString()));
+                for (int i = 0; i < 16; i++)
+                    if (rs.Amounts[i] > 0)
+                        list.Add(new($"Release #{i + 1}", $"{rs.Amounts[i]:N0} QU → {PkToIdentity(rs.Destinations[i])}"));
+                break;
+            case 7 when data.Length >= 16:
+                var bo = Qubic.Core.Contracts.Msvault.GetBalanceOfOutput.FromBytes(data);
+                list.Add(new("Status", bo.Status.ToString()));
+                list.Add(new("Balance", bo.Balance.ToString("N0")));
+                break;
+            case 8 when data.Length >= 40:
+                var vn = Qubic.Core.Contracts.Msvault.GetVaultNameOutput.FromBytes(data);
+                list.Add(new("Status", vn.Status.ToString()));
+                list.Add(new("Name", FormatVaultName(vn.VaultName)));
+                break;
+            case 10 when data.Length >= 48:
+                var fees = Qubic.Core.Contracts.Msvault.GetFeesOutput.FromBytes(data);
+                list.Add(new("Register", fees.RegisteringFee.ToString("N0")));
+                list.Add(new("Release", fees.ReleaseFee.ToString("N0")));
+                list.Add(new("Reset", fees.ReleaseResetFee.ToString("N0")));
+                list.Add(new("Holding", fees.HoldingFee.ToString("N0")));
+                list.Add(new("Deposit", fees.DepositFee.ToString("N0")));
+                list.Add(new("Burn", fees.BurnFee.ToString("N0")));
+                break;
+            case 11 when data.Length >= 536:
+                var vo = Qubic.Core.Contracts.Msvault.GetVaultOwnersOutput.FromBytes(data);
+                list.Add(new("Status", vo.Status.ToString()));
+                list.Add(new("Owners", vo.NumberOfOwners.ToString()));
+                for (int i = 0; i < (int)Math.Min(vo.NumberOfOwners, 16); i++)
+                    list.Add(new($"Owner #{i + 1}", PkToIdentity(vo.Owners[i])));
+                list.Add(new("Required Approvals", vo.RequiredApprovals.ToString()));
+                break;
+            case 12 when data.Length >= 8:
+                var sh = Qubic.Core.Contracts.Msvault.IsShareHolderOutput.FromBytes(data);
+                list.Add(new("Result", sh.Result != 0 ? "Yes" : "No"));
+                break;
+            default:
+                list.Add(new("Raw", data.Length > 0 ? Convert.ToHexString(data) : "(empty)"));
+                break;
+        }
+        return list;
+    }
+
+    // ── Helpers ──
+
+    string PkToIdentity(byte[] pk)
+    {
+        try { return QubicIdentity.FromPublicKey(pk).ToString(); }
+        catch { return Convert.ToHexString(pk); }
+    }
+
+    string FormatVaultName(byte[] raw)
+    {
+        if (raw == null || raw.Length == 0) return "(empty)";
+        var trimmed = raw.AsSpan().TrimEnd((byte)0);
+        if (trimmed.Length > 0)
+        {
+            try
+            {
+                var text = System.Text.Encoding.UTF8.GetString(trimmed);
+                if (text.Length > 0 && !text.Any(c => char.IsControl(c) && c != '\t'))
+                    return text;
+            }
+            catch { }
+        }
+        return PkToIdentity(raw);
+    }
+
+    bool _disposed;
+    void OnTrackerChanged()
+    {
+        if (_disposed) return;
+        InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        TxTracker.OnChanged -= OnTrackerChanged;
+    }
+}

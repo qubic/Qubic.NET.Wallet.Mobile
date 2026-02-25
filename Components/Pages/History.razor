@@ -64,7 +64,7 @@ else if (_tab == "tx")
                                 </span>
                             </div>
                             <div class="small text-muted">@(string.IsNullOrEmpty(tx.Description) ? "" : tx.Description)</div>
-                            <div class="mono text-muted" style="font-size:0.65rem">T@(tx.TargetTick)</div>
+                            <div class="text-muted" style="font-size:0.65rem">@tx.CreatedUtc.ToString("yyyy-MM-dd HH:mm")</div>
                         </div>
                         <div class="text-end">
                             <div class="fw-bold small">-@tx.Amount.ToString("N0") QU</div>
@@ -79,6 +79,7 @@ else if (_tab == "tx")
                             <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Hash</div>
                             <div class="mb-1"><strong>To:</strong></div>
                             <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@tx.Destination</div>
+                            <div class="mb-1"><strong>Target Tick:</strong> @tx.TargetTick.ToString("N0")</div>
                             @if (tx.MoneyFlew.HasValue)
                             {
                                 <div class="mb-1"><strong>Money Flew:</strong> @(tx.MoneyFlew.Value ? "Yes" : "No")</div>
@@ -143,7 +144,7 @@ else if (_tab == "tx")
                             {
                                 <div class="small text-muted">@tracked.Description</div>
                             }
-                            <div class="mono text-muted" style="font-size:0.65rem">T@(tx.Tick)</div>
+                            <div class="text-muted" style="font-size:0.65rem">@FormatTxTime(tx)</div>
                         </div>
                         <div class="text-end">
                             <div class="fw-bold small">@(isSent ? "-" : "+")@tx.GetAmountAsLong().ToString("N0") QU</div>
@@ -575,6 +576,13 @@ else
         el.TryGetProperty(prop, out var val) ? val.ToString() : "?";
 
     static string Trunc(string s) => s.Length > 12 ? s[..12] + "..." : s;
+
+    static string FormatTxTime(StoredTransaction tx)
+    {
+        if (tx.TimestampMs.HasValue)
+            return DateTimeOffset.FromUnixTimeMilliseconds(tx.TimestampMs.Value).UtcDateTime.ToString("yyyy-MM-dd HH:mm");
+        return $"T{tx.Tick}";
+    }
 
     static string FormatJson(string json)
     {
