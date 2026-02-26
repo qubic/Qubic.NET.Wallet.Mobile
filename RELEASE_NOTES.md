@@ -1,5 +1,39 @@
 # Release Notes
 
+## v0.3.0
+
+### New Features
+
+#### MSVault
+- Full multi-signature vault interface for creating, managing, and signing multi-sig transactions
+
+#### Watchlist
+- Dedicated watchlist page for monitoring addresses you don't own
+- Add any 60-character identity with a custom label
+- View QU balance and owned assets for each watched address
+- Accessible from Vault > Manage menu
+
+#### Light Theme
+- Full light theme support for navigation, top bar, tab bar, cards, and all UI elements
+- Theme selection is now persisted and applied on app startup (no longer resets to dark)
+
+### Improvements
+
+- **Vault UI restructured** — Consolidated from 5 separate cards to 2: Seeds card (with inline add form) and a single Manage menu card with expandable sections for contacts, change password, biometric toggle, and export
+- **Asset page** — Enhanced asset display with improved caching (AssetCacheService) and better UX
+- **Home page** — UI improvements
+- **App icon** — Updated to new Qubic logo
+
+### Downloads
+
+| Platform | File |
+|----------|------|
+| Android | `org.qubic.lab.wallet-0.3.0.apk` |
+
+Verify downloads with the `.sha256` file included alongside the APK.
+
+---
+
 ## v0.2.0
 
 ### Core Features
