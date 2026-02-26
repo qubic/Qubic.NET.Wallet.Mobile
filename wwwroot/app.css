@@ -42,6 +42,31 @@
     --qb-tab-height: 56px;
 }
 
+/* ── Light Theme Tokens ── */
+[data-bs-theme="light"] {
+    --qb-bg-primary: #ffffff;
+    --qb-bg-secondary: #f4f5f7;
+    --qb-bg-card: #ffffff;
+    --qb-bg-card-alt: #f0f1f3;
+    --qb-bg-elevated: #e5e7eb;
+    --qb-accent-cyan: #0891b2;
+    --qb-accent-cyan-dim: rgba(8, 145, 178, 0.06);
+    --qb-accent-cyan-muted: #06b6d4;
+    --qb-accent-gold: #d97706;
+    --qb-accent-gold-hover: #b45309;
+    --qb-text-primary: #1a1a2e;
+    --qb-text-secondary: #4b5563;
+    --qb-text-muted: #9ca3af;
+    --qb-border: rgba(0, 0, 0, 0.09);
+    --qb-border-strong: rgba(0, 0, 0, 0.18);
+    --bs-body-bg: #ffffff;
+    --bs-body-color: #1a1a2e;
+    --bs-card-bg: #ffffff;
+    --bs-card-border-color: rgba(0, 0, 0, 0.09);
+    --bs-link-color: #0891b2;
+    --bs-link-hover-color: #06b6d4;
+}
+
 /* ── Bootstrap Dark Theme Overrides ── */
 [data-bs-theme="dark"] {
     --bs-body-bg: var(--qb-bg-primary);
@@ -181,7 +206,7 @@ h4 { font-size: 1.15rem; }
 
 /* ── Badges ── */
 .badge-qb-cyan {
-    background: rgba(35, 255, 255, 0.12);
+    background: var(--qb-accent-cyan-dim);
     color: var(--qb-accent-cyan);
     font-weight: 500;
     font-size: 0.7rem;
@@ -460,7 +485,7 @@ h4 { font-size: 1.15rem; }
     min-width: 200px;
     max-height: 260px;
     overflow-y: auto;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
 .qb-wallet-dropdown-item {

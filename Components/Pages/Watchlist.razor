@@ -1,0 +1,376 @@
+@page "/watchlist"
+@using Qubic.Core.Entities
+@inject VaultService VaultSvc
+@inject QubicBackendService Backend
+@inject QrScannerService QrScanner
+@implements IDisposable
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0">Watchlist</h4>
+    <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" @onclick="RefreshAll" disabled="@_refreshing">
+            @if (_refreshing)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            else
+            {
+                <i class="bi bi-arrow-clockwise me-1"></i>
+            }
+            Refresh
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAdd = !_showAdd">
+            <i class="bi bi-plus"></i>
+        </button>
+    </div>
+</div>
+
+@if (_lastRefresh != null)
+{
+    <div class="text-muted small mb-2">Last updated: @_lastRefresh.Value.ToLocalTime().ToString("HH:mm:ss")</div>
+}
+
+@if (!VaultSvc.IsUnlocked)
+{
+    <div class="alert alert-info small">
+        <i class="bi bi-lock me-1"></i>Unlock your vault to manage the watchlist.
+    </div>
+}
+else
+{
+    @if (_showAdd)
+    {
+        <div class="card mb-3">
+            <div class="card-header">Add Address</div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <input class="form-control form-control-sm" @bind="_addLabel" placeholder="Label" />
+                </div>
+                <div class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input class="form-control mono" @bind="_addAddress"
+                               placeholder="60-char identity" maxlength="60" />
+                        <button class="btn btn-outline-secondary" type="button" @onclick="ScanAddress" title="Scan QR">
+                            <i class="bi bi-qr-code-scan"></i>
+                        </button>
+                    </div>
+                </div>
+                @if (_addError != null)
+                {
+                    <div class="text-danger small mb-2">@_addError</div>
+                }
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-primary flex-fill"
+                            disabled="@(_addAddress?.Length != 60 || string.IsNullOrWhiteSpace(_addLabel))"
+                            @onclick="AddEntry">Add</button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAdd = false">Cancel</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (VaultSvc.Watchlist.Count == 0)
+    {
+        <div class="text-center text-muted py-5">
+            <i class="bi bi-eye" style="font-size:2rem"></i>
+            <p class="mt-2 mb-0">No addresses in watchlist.</p>
+            <p class="small">Tap <strong>+</strong> to add an address to monitor.</p>
+        </div>
+    }
+    else
+    {
+        @foreach (var entry in VaultSvc.Watchlist)
+        {
+            var hasData = _data.TryGetValue(entry.Address, out var info);
+            var expanded = _expanded.Contains(entry.Address);
+            <div class="card mb-2">
+                <div class="card-body p-3" @onclick="() => ToggleExpand(entry.Address)">
+                    @* ── Header row: label + balance ── *@
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1 me-2">
+                            @if (_editingAddress == entry.Address)
+                            {
+                                <div class="d-flex gap-1 mb-1" @onclick:stopPropagation>
+                                    <input class="form-control form-control-sm" style="max-width:200px"
+                                           @bind="_editLabel" />
+                                    <button class="btn btn-sm btn-primary" @onclick="SaveRename">
+                                        <i class="bi bi-check"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingAddress = null">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="fw-bold small">@entry.Label</div>
+                            }
+                            <div class="mono text-muted" style="font-size:0.65rem">
+                                @entry.Address[..16]...@entry.Address[^8..]
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            @if (hasData && info!.Error != null)
+                            {
+                                <div class="text-danger small">Error</div>
+                            }
+                            else if (hasData)
+                            {
+                                <div class="fw-bold">@info!.Balance.ToString("N0")</div>
+                                <div class="text-muted" style="font-size:0.7rem">QU</div>
+                            }
+                            else if (_refreshing)
+                            {
+                                <span class="spinner-border spinner-border-sm text-muted"></span>
+                            }
+                            else
+                            {
+                                <div class="text-muted small">--</div>
+                            }
+                        </div>
+                    </div>
+
+                    @* ── Expanded details ── *@
+                    @if (expanded && hasData && info!.Error == null)
+                    {
+                        <div class="mt-2 pt-2 border-top" style="border-color:var(--qb-border)!important" @onclick:stopPropagation>
+                            <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@entry.Address</div>
+
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted small">In / Out</span>
+                                <span class="small">@info.IncomingCount.ToString("N0") / @info.OutgoingCount.ToString("N0")</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted small">Updated</span>
+                                <span class="small">@info.FetchedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                            </div>
+
+                            @if (info.Assets.Count > 0)
+                            {
+                                <div class="mt-2">
+                                    <div class="small text-muted mb-1">Assets (@info.Assets.Count)</div>
+                                    @foreach (var asset in info.Assets)
+                                    {
+                                        <div class="d-flex justify-content-between py-1 border-bottom" style="border-color:var(--qb-border)!important">
+                                            <div>
+                                                <strong class="small">@asset.Name</strong>
+                                                <div class="mono text-muted" style="font-size:0.6rem">@asset.Issuer[..12]...</div>
+                                            </div>
+                                            <div class="text-end small fw-bold">@asset.Units</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (expanded && hasData && info!.Error != null)
+                    {
+                        <div class="mt-2 pt-2 border-top text-danger small" style="border-color:var(--qb-border)!important"
+                             @onclick:stopPropagation>
+                            @info.Error
+                        </div>
+                    }
+
+                    @* ── Action buttons ── *@
+                    @if (_editingAddress != entry.Address)
+                    {
+                        <div class="d-flex gap-1 mt-2" @onclick:stopPropagation>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => { _editingAddress = entry.Address; _editLabel = entry.Label; }">
+                                <i class="bi bi-pencil me-1"></i>Rename
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => FetchData(entry.Address)">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger ms-auto" @onclick="() => _confirmRemove = entry">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+
+    @if (_error != null)
+    {
+        <div class="alert alert-danger small mt-2">@_error</div>
+    }
+}
+
+<ConfirmModal Visible="_confirmRemove != null"
+              Title="Remove from Watchlist"
+              Message="@($"Remove \"{_confirmRemove?.Label}\" from watchlist?")"
+              ConfirmText="Remove"
+              OnConfirm="DoRemove"
+              OnCancel="() => _confirmRemove = null" />
+
+@code {
+    // Add form
+    bool _showAdd;
+    string? _addLabel;
+    string? _addAddress;
+    string? _addError;
+
+    // Edit
+    string? _editingAddress;
+    string? _editLabel;
+
+    // State
+    string? _error;
+    bool _refreshing;
+    DateTime? _lastRefresh;
+    WatchlistEntry? _confirmRemove;
+    Dictionary<string, AddressData> _data = new();
+    HashSet<string> _expanded = new();
+
+    sealed class AssetInfo
+    {
+        public string Name { get; init; } = "";
+        public string Issuer { get; init; } = "";
+        public string Units { get; init; } = "0";
+    }
+
+    sealed class AddressData
+    {
+        public long Balance { get; set; }
+        public uint IncomingCount { get; set; }
+        public uint OutgoingCount { get; set; }
+        public List<AssetInfo> Assets { get; set; } = [];
+        public DateTime FetchedAt { get; set; }
+        public string? Error { get; set; }
+    }
+
+    protected override void OnInitialized()
+    {
+        VaultSvc.OnVaultChanged += OnStateChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && VaultSvc.IsUnlocked && VaultSvc.Watchlist.Count > 0)
+        {
+            await RefreshAll();
+            StateHasChanged();
+        }
+    }
+
+    void ToggleExpand(string address)
+    {
+        if (!_expanded.Remove(address))
+            _expanded.Add(address);
+    }
+
+    void AddEntry()
+    {
+        _addError = null;
+        try
+        {
+            VaultSvc.AddWatchlistEntry(_addLabel!, _addAddress!);
+            var addr = _addAddress!.Trim().ToUpperInvariant();
+            _addLabel = null;
+            _addAddress = null;
+            _showAdd = false;
+            _ = FetchData(addr);
+        }
+        catch (Exception ex)
+        {
+            _addError = ex.Message;
+        }
+    }
+
+    void DoRemove()
+    {
+        if (_confirmRemove == null) return;
+        try
+        {
+            _data.Remove(_confirmRemove.Address);
+            _expanded.Remove(_confirmRemove.Address);
+            VaultSvc.RemoveWatchlistEntry(_confirmRemove.Address);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        _confirmRemove = null;
+    }
+
+    void SaveRename()
+    {
+        if (_editingAddress == null || string.IsNullOrWhiteSpace(_editLabel)) return;
+        try { VaultSvc.RenameWatchlistEntry(_editingAddress, _editLabel); }
+        catch (Exception ex) { _error = ex.Message; }
+        _editingAddress = null;
+    }
+
+    async Task ScanAddress()
+    {
+        var result = await QrScanner.ScanAsync();
+        if (!string.IsNullOrEmpty(result))
+        {
+            _addAddress = result.Trim();
+            StateHasChanged();
+        }
+    }
+
+    async Task RefreshAll()
+    {
+        _refreshing = true;
+        StateHasChanged();
+
+        var tasks = VaultSvc.Watchlist.Select(e => FetchData(e.Address)).ToList();
+        await Task.WhenAll(tasks);
+
+        _refreshing = false;
+        _lastRefresh = DateTime.UtcNow;
+        StateHasChanged();
+    }
+
+    async Task FetchData(string address)
+    {
+        var info = new AddressData();
+        try
+        {
+            var identity = QubicIdentity.FromIdentity(address);
+
+            var balanceTask = Backend.GetBalanceAsync(identity);
+            var assetsTask = FetchAssetsQuiet(identity);
+            await Task.WhenAll(balanceTask, assetsTask);
+
+            var bal = await balanceTask;
+            info.Balance = bal.Amount;
+            info.IncomingCount = bal.IncomingCount;
+            info.OutgoingCount = bal.OutgoingCount;
+            info.Assets = await assetsTask;
+            info.FetchedAt = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            info.Error = ex.Message;
+            info.FetchedAt = DateTime.UtcNow;
+        }
+        _data[address] = info;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    async Task<List<AssetInfo>> FetchAssetsQuiet(QubicIdentity identity)
+    {
+        try
+        {
+            var owned = await Backend.GetOwnedAssetsAsync(identity);
+            return owned
+                .Where(a => a.Data.IssuedAsset != null)
+                .Select(a => new AssetInfo
+                {
+                    Name = a.Data.IssuedAsset!.Name,
+                    Issuer = a.Data.IssuedAsset.IssuerIdentity,
+                    Units = a.Data.NumberOfUnits
+                })
+                .ToList();
+        }
+        catch { return []; }
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        VaultSvc.OnVaultChanged -= OnStateChanged;
+    }
+}

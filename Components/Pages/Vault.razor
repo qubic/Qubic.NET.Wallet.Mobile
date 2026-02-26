@@ -100,13 +100,22 @@ else if (!VaultSvc.IsUnlocked)
 }
 else
 {
-    <!-- Unlocked — Seeds, Contacts, Actions -->
+    <!-- Unlocked -->
     <div class="d-flex align-items-center justify-content-between mb-3">
         <h4 class="mb-0">Vault</h4>
         <span class="badge-qb-success"><i class="bi bi-unlock me-1"></i>Unlocked</span>
     </div>
 
-    <!-- Seeds Section -->
+    @if (_error != null)
+    {
+        <div class="alert alert-danger small">@_error</div>
+    }
+    @if (_success != null)
+    {
+        <div class="alert alert-success small">@_success</div>
+    }
+
+    @* ── Seeds ── *@
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-key-fill me-1"></i>Seeds</span>
@@ -126,7 +135,7 @@ else
                                @bind="_newSeed" @bind:event="oninput" placeholder="55-char seed" maxlength="55" />
                     </div>
                     <button class="btn btn-sm btn-outline-secondary w-100 mb-2" @onclick="GenerateNewSeed">
-                        <i class="bi bi-plus-circle me-1"></i> Generate Random Seed
+                        <i class="bi bi-shuffle me-1"></i> Generate Random Seed
                     </button>
                     @if (_generatedSeed != null)
                     {
@@ -172,18 +181,12 @@ else
                             </div>
                             <div class="mono text-muted" style="font-size:0.7rem">@entry.Identity[..16]...@entry.Identity[^8..]</div>
                         </div>
-
                         @if (_editingEntry == entry.Identity)
                         {
                             <div class="d-flex gap-1 ms-2" @onclick:stopPropagation>
-                                <input class="form-control form-control-sm" style="width:100px"
-                                       @bind="_editLabel" />
-                                <button class="btn btn-sm btn-primary" @onclick="SaveEntryRename">
-                                    <i class="bi bi-check"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingEntry = null">
-                                    <i class="bi bi-x"></i>
-                                </button>
+                                <input class="form-control form-control-sm" style="width:100px" @bind="_editLabel" />
+                                <button class="btn btn-sm btn-primary" @onclick="SaveEntryRename"><i class="bi bi-check"></i></button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingEntry = null"><i class="bi bi-x"></i></button>
                             </div>
                         }
                         else
@@ -208,96 +211,103 @@ else
         </div>
     </div>
 
-    <!-- Contacts Section -->
+    @* ── Manage ── *@
     <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-person-lines-fill me-1"></i>Contacts</span>
-            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = !_showAddContact">
-                <i class="bi bi-plus"></i>
-            </button>
-        </div>
         <div class="card-body p-0">
-            @if (_showAddContact)
+            @* Contacts row *@
+            <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important;cursor:pointer"
+                 @onclick="() => _showContacts = !_showContacts">
+                <i class="bi bi-person-lines-fill me-2" style="color:var(--qb-accent-cyan)"></i>
+                <span class="flex-grow-1 small fw-bold">Contacts</span>
+                <span class="badge bg-secondary me-2">@VaultSvc.Contacts.Count</span>
+                <i class="bi @(_showContacts ? "bi-chevron-down" : "bi-chevron-right") text-muted" style="font-size:0.75rem"></i>
+            </div>
+            @if (_showContacts)
             {
-                <div class="p-3 border-bottom" style="border-color:var(--qb-border)!important">
-                    <div class="mb-2">
-                        <input class="form-control form-control-sm" @bind="_newContactLabel" placeholder="Label" />
-                    </div>
-                    <div class="mb-2">
-                        <div class="input-group input-group-sm">
-                            <input class="form-control mono"
-                                   @bind="_newContactAddress" placeholder="60-char identity" maxlength="60" />
-                            <button class="btn btn-outline-secondary" type="button" @onclick="ScanContactAddress" title="Scan QR">
-                                <i class="bi bi-qr-code-scan"></i>
+                <div class="border-bottom" style="border-color:var(--qb-border)!important;background:var(--qb-bg-card-alt)">
+                    @foreach (var contact in VaultSvc.Contacts)
+                    {
+                        <div class="d-flex align-items-center px-3 py-2 border-bottom" style="border-color:var(--qb-border)!important">
+                            <div class="flex-grow-1">
+                                <div class="fw-bold small">@contact.Label</div>
+                                <div class="mono text-muted" style="font-size:0.65rem">@contact.Address[..16]...@contact.Address[^8..]</div>
+                            </div>
+                            @if (_editingContact == contact.Address)
+                            {
+                                <div class="d-flex gap-1 ms-2">
+                                    <input class="form-control form-control-sm" style="width:100px" @bind="_editLabel" />
+                                    <button class="btn btn-sm btn-primary" @onclick="SaveContactRename"><i class="bi bi-check"></i></button>
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingContact = null"><i class="bi bi-x"></i></button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="d-flex gap-1 ms-2">
+                                    <button class="btn btn-sm btn-outline-secondary" title="Rename"
+                                            @onclick="() => { _editingContact = contact.Address; _editLabel = contact.Label; }">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" title="Remove"
+                                            @onclick="() => ConfirmRemoveContact(contact)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (_showAddContact)
+                    {
+                        <div class="p-3">
+                            <div class="mb-2">
+                                <input class="form-control form-control-sm" @bind="_newContactLabel" placeholder="Label" />
+                            </div>
+                            <div class="mb-2">
+                                <div class="input-group input-group-sm">
+                                    <input class="form-control mono" @bind="_newContactAddress"
+                                           placeholder="60-char identity" maxlength="60" />
+                                    <button class="btn btn-outline-secondary" type="button" @onclick="ScanContactAddress" title="Scan QR">
+                                        <i class="bi bi-qr-code-scan"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-primary flex-fill"
+                                        disabled="@(_newContactAddress?.Length != 60 || string.IsNullOrWhiteSpace(_newContactLabel))"
+                                        @onclick="AddContact">Add</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = false">Cancel</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="p-2 text-center">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = true">
+                                <i class="bi bi-plus me-1"></i>Add Contact
                             </button>
                         </div>
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-primary flex-fill"
-                                disabled="@(_newContactAddress?.Length != 60 || string.IsNullOrWhiteSpace(_newContactLabel))"
-                                @onclick="AddContact">Add</button>
-                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showAddContact = false">Cancel</button>
-                    </div>
+                    }
                 </div>
             }
 
-            @if (VaultSvc.Contacts.Count == 0)
-            {
-                <div class="text-center text-muted py-3 small">No contacts saved.</div>
-            }
-            else
-            {
-                @foreach (var contact in VaultSvc.Contacts)
-                {
-                    <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important">
-                        <div class="flex-grow-1">
-                            <div class="fw-bold small">@contact.Label</div>
-                            <div class="mono text-muted" style="font-size:0.7rem">@contact.Address[..16]...@contact.Address[^8..]</div>
-                        </div>
+            @* Watchlist row *@
+            <a href="/watchlist" class="d-flex align-items-center p-3 border-bottom text-decoration-none"
+               style="border-color:var(--qb-border)!important;color:inherit">
+                <i class="bi bi-eye me-2" style="color:var(--qb-accent-cyan)"></i>
+                <span class="flex-grow-1 small fw-bold">Watchlist</span>
+                <span class="badge bg-secondary me-2">@VaultSvc.Watchlist.Count</span>
+                <i class="bi bi-chevron-right text-muted" style="font-size:0.75rem"></i>
+            </a>
 
-                        @if (_editingContact == contact.Address)
-                        {
-                            <div class="d-flex gap-1 ms-2">
-                                <input class="form-control form-control-sm" style="width:100px"
-                                       @bind="_editLabel" />
-                                <button class="btn btn-sm btn-primary" @onclick="SaveContactRename">
-                                    <i class="bi bi-check"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _editingContact = null">
-                                    <i class="bi bi-x"></i>
-                                </button>
-                            </div>
-                        }
-                        else
-                        {
-                            <div class="d-flex gap-1 ms-2">
-                                <button class="btn btn-sm btn-outline-secondary" title="Rename"
-                                        @onclick="() => { _editingContact = contact.Address; _editLabel = contact.Label; }">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger" title="Remove"
-                                        @onclick="() => ConfirmRemoveContact(contact)">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </div>
-                        }
-                    </div>
-                }
-            }
-        </div>
-    </div>
-
-    <!-- Vault Actions -->
-    <div class="card">
-        <div class="card-header"><i class="bi bi-gear me-1"></i>Vault Actions</div>
-        <div class="card-body d-grid gap-2">
-            <button class="btn btn-outline-secondary btn-sm" @onclick="() => _showChangePassword = !_showChangePassword">
-                <i class="bi bi-key me-1"></i> Change Password
-            </button>
-
+            @* Change Password row *@
+            <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important;cursor:pointer"
+                 @onclick="() => _showChangePassword = !_showChangePassword">
+                <i class="bi bi-key me-2" style="color:var(--qb-accent-cyan)"></i>
+                <span class="flex-grow-1 small fw-bold">Change Password</span>
+                <i class="bi @(_showChangePassword ? "bi-chevron-down" : "bi-chevron-right") text-muted" style="font-size:0.75rem"></i>
+            </div>
             @if (_showChangePassword)
             {
-                <div class="p-2 rounded" style="background:var(--qb-bg-elevated)">
+                <div class="p-3 border-bottom" style="border-color:var(--qb-border)!important;background:var(--qb-bg-card-alt)">
                     <div class="mb-2">
                         <input type="password" class="form-control form-control-sm"
                                @bind="_currentPassword" placeholder="Current password" />
@@ -318,18 +328,19 @@ else
                 </div>
             }
 
+            @* Biometric row *@
             @if (_biometricSupported)
             {
-                <div class="d-flex align-items-center justify-content-between p-2 rounded" style="background:var(--qb-bg-elevated)">
-                    <span class="small"><i class="bi bi-fingerprint me-1"></i>Biometric Unlock</span>
+                <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important">
+                    <i class="bi bi-fingerprint me-2" style="color:var(--qb-accent-cyan)"></i>
+                    <span class="flex-grow-1 small fw-bold">Biometric Unlock</span>
                     <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" checked="@_biometricEnabled" @onchange="ToggleBiometric" />
                     </div>
                 </div>
-
                 @if (_showBioPasswordPrompt)
                 {
-                    <div class="p-2 rounded" style="background:var(--qb-bg-elevated)">
+                    <div class="p-3 border-bottom" style="border-color:var(--qb-border)!important;background:var(--qb-bg-card-alt)">
                         <div class="small text-muted mb-2">Enter your vault password to enable biometric:</div>
                         <div class="d-flex gap-2">
                             <input type="password" class="form-control form-control-sm" @bind="_bioPassword"
@@ -345,26 +356,25 @@ else
                 }
             }
 
-            <button class="btn btn-outline-secondary btn-sm" @onclick="ExportVault">
-                <i class="bi bi-box-arrow-up me-1"></i> Export Vault
-            </button>
-            <button class="btn btn-outline-secondary btn-sm" @onclick="LockVault">
-                <i class="bi bi-lock me-1"></i> Lock Vault
-            </button>
-            <button class="btn btn-outline-danger btn-sm" @onclick="() => _confirmDelete = true">
-                <i class="bi bi-trash me-1"></i> Delete Vault
-            </button>
+            @* Export row *@
+            <div class="d-flex align-items-center p-3 border-bottom" style="border-color:var(--qb-border)!important;cursor:pointer"
+                 @onclick="ExportVault">
+                <i class="bi bi-box-arrow-up me-2" style="color:var(--qb-accent-cyan)"></i>
+                <span class="flex-grow-1 small fw-bold">Export Vault</span>
+                <i class="bi bi-chevron-right text-muted" style="font-size:0.75rem"></i>
+            </div>
         </div>
     </div>
 
-    @if (_error != null)
-    {
-        <div class="alert alert-danger small">@_error</div>
-    }
-    @if (_success != null)
-    {
-        <div class="alert alert-success small">@_success</div>
-    }
+    @* ── Lock / Delete ── *@
+    <div class="d-grid gap-2 mt-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LockVault">
+            <i class="bi bi-lock me-1"></i> Lock Vault
+        </button>
+        <button class="btn btn-outline-danger btn-sm" @onclick="() => _confirmDelete = true">
+            <i class="bi bi-trash me-1"></i> Delete Vault
+        </button>
+    </div>
 }
 
 <ConfirmModal Visible="_confirmDelete"
@@ -405,6 +415,9 @@ else
     string? _generatedSeed;
     bool _revealSeed;
 
+    // Manage sections
+    bool _showContacts;
+
     // Add contact
     bool _showAddContact;
     string? _newContactLabel;
@@ -425,7 +438,6 @@ else
     bool _confirmDelete;
     VaultEntry? _confirmRemoveEntry;
     ContactEntry? _confirmRemoveContact;
-
     // Biometric
     bool _biometricSupported;
     bool _biometricEnabled;
