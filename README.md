@@ -5,6 +5,10 @@
 
 A cross-platform mobile wallet for the Qubic network, built with .NET MAUI Blazor Hybrid.
 
+<img width="350"  alt="home screen" src="https://github.com/user-attachments/assets/d1d47d29-d19a-4813-b6cf-1b40d3e85e95" />
+<img width="350" alt="defi screen" src="https://github.com/user-attachments/assets/a09a3c73-b4e3-4d4b-91f5-6a7ec013db0b" />
+
+
 ## Features
 
 - **Vault Management** — Encrypted vault with multiple seeds, contacts address book, import/export, biometric unlock (fingerprint/face)
