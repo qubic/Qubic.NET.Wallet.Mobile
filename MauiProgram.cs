@@ -57,5 +57,7 @@ public static class MauiProgram
         services.AddSingleton<LabelService>();
         services.AddSingleton<QrScannerService>();
         services.AddSingleton<AssetCacheService>();
+        services.AddSingleton<BalanceService>();
+        services.AddSingleton<Services.AppLifecycleService>();
     }
 }

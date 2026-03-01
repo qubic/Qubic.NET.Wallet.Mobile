@@ -38,6 +38,7 @@
     --qb-border: rgba(35, 255, 255, 0.08);
     --qb-border-strong: rgba(35, 255, 255, 0.2);
     /* Mobile spacing */
+    --qb-safe-top: env(safe-area-inset-top, 0px);
     --qb-safe-bottom: env(safe-area-inset-bottom, 0px);
     --qb-tab-height: 56px;
 }
@@ -129,25 +130,57 @@ h4 { font-size: 1.15rem; }
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.5rem 1rem;
+    padding: 0.5rem 0.75rem;
+    padding-top: calc(var(--qb-safe-top) + 0.5rem);
     background: var(--qb-bg-secondary);
     border-bottom: 1px solid var(--qb-border);
     min-height: 48px;
     flex-shrink: 0;
-    gap: 0.5rem;
     position: relative;
 }
 
-.qb-topbar-logo {
-    height: 24px;
+.qb-topbar-icon {
+    height: 18px;
     width: auto;
+    flex-shrink: 0;
 }
 
-.qb-topbar-status {
+.qb-topbar-center {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.4rem;
     font-size: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+}
+
+.qb-topbar-balance {
+    font-size: 0.7rem;
+    color: var(--qb-text-secondary);
+}
+
+.qb-topbar-end {
+    flex-shrink: 0;
+}
+
+.qb-connection-badge {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.qb-tick-popup {
+    position: absolute;
+    top: 100%;
+    right: 0.5rem;
+    z-index: 2000;
+    background: var(--qb-bg-card);
+    border: 1px solid var(--qb-border-strong);
+    border-radius: 0.4rem;
+    padding: 0.35rem 0.6rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    white-space: nowrap;
 }
 
 /* ── Content Area ── */
@@ -166,7 +199,7 @@ h4 { font-size: 1.15rem; }
     align-items: center;
     background: var(--qb-bg-secondary);
     border-top: 1px solid var(--qb-border);
-    height: var(--qb-tab-height);
+    min-height: var(--qb-tab-height);
     padding-bottom: var(--qb-safe-bottom);
     flex-shrink: 0;
     position: fixed;

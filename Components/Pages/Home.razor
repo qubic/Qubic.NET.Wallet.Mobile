@@ -9,6 +9,8 @@
 @inject QubicSettingsService Settings
 @inject AssetCacheService AssetCache
 @inject IJSRuntime JS
+@inject BalanceService BalanceSvc
+@inject Qubic.Net.Wallet.Mobile.Services.AppLifecycleService Lifecycle
 @using Maui.Biometric
 @implements IDisposable
 
@@ -222,7 +224,7 @@ else
                 <span>Balance</span>
             }
         </div>
-        <div class="qb-balance-amount">@(_balance?.ToString("N0") ?? "—") QU</div>
+        <div class="qb-balance-amount">@(BalanceSvc.Balance?.ToString("N0") ?? "—") QU</div>
         <div class="mono small text-muted mt-1">@Seed.Identity?.ToString()[..16]...</div>
     </div>
 
@@ -311,7 +313,6 @@ else
     string? _generatedSeed;
     bool _revealSeed;
     string? _error;
-    long? _balance;
     bool _wasConnected;
     System.Threading.Timer? _refreshTimer;
     DotNetObjectReference<Home>? _selfRef;
@@ -330,6 +331,9 @@ else
         TickMonitor.OnTickChanged += OnTickChanged;
         Vault.OnVaultChanged += OnStateChanged;
         AssetCache.OnAssetsChanged += OnStateChanged;
+        BalanceSvc.OnBalanceChanged += OnStateChanged;
+        Lifecycle.OnStopped += OnAppStopped;
+        Lifecycle.OnResumed += OnAppResumed;
 
         // Check if biometric is available and a password is stored
         await CheckBiometricAvailability();
@@ -337,7 +341,7 @@ else
         // Auto-prompt biometric on launch if available
         if (_biometricAvailable && Vault.VaultExists && !Vault.IsUnlocked)
         {
-            _ = BiometricUnlock();
+            BiometricUnlock().FireAndForget();
         }
     }
 
@@ -353,7 +357,8 @@ else
     [JSInvokable]
     public async Task OnPullRefresh()
     {
-        await FetchBalanceAndAssets();
+        BalanceSvc.RequestRefresh();
+        await FetchAssets();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -547,7 +552,7 @@ else
     void OnUnlockKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrEmpty(_unlockPassword))
-            _ = UnlockVault();
+            UnlockVault().FireAndForget();
     }
 
     void AddSeedAndActivate()
@@ -573,18 +578,12 @@ else
         await TickMonitor.StartAsync();
     }
 
-    async Task FetchBalanceAndAssets()
+    async Task FetchAssets()
     {
         if (Seed.Identity == null || !TickMonitor.IsConnected) return;
         try
         {
-            var balanceTask = Backend.GetBalanceAsync(Seed.Identity.Value);
-            var assetsTask = AssetCache.RefreshAsync();
-            await Task.WhenAll(balanceTask, assetsTask);
-
-            var info = await balanceTask;
-            if (info != null)
-                _balance = info.Amount;
+            await AssetCache.RefreshAsync();
         }
         catch { }
         await InvokeAsync(StateHasChanged);
@@ -595,7 +594,7 @@ else
         if (TickMonitor.IsConnected && !_wasConnected)
         {
             _wasConnected = true;
-            _ = FetchBalanceAndAssets();
+            FetchAssets().FireAndForget();
             StartRefreshTimer();
         }
         else if (!TickMonitor.IsConnected && _wasConnected)
@@ -611,8 +610,9 @@ else
         StopRefreshTimer();
         _refreshTimer = new System.Threading.Timer(_ =>
         {
+            if (!Lifecycle.IsForegrounded) return;
             if (Seed.HasSeed && TickMonitor.IsConnected)
-                _ = FetchBalanceAndAssets();
+                FetchAssets().FireAndForget();
         }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
     }
 
@@ -622,11 +622,18 @@ else
         _refreshTimer = null;
     }
 
+    void OnAppStopped() { StopRefreshTimer(); }
+
+    void OnAppResumed()
+    {
+        if (Seed.HasSeed && TickMonitor.IsConnected)
+            StartRefreshTimer();
+    }
+
     void OnSeedChanged()
     {
-        _balance = null;
         if (TickMonitor.IsConnected)
-            _ = FetchBalanceAndAssets();
+            FetchAssets().FireAndForget();
         InvokeAsync(StateHasChanged);
     }
 
@@ -641,6 +648,9 @@ else
         TickMonitor.OnTickChanged -= OnTickChanged;
         Vault.OnVaultChanged -= OnStateChanged;
         AssetCache.OnAssetsChanged -= OnStateChanged;
+        BalanceSvc.OnBalanceChanged -= OnStateChanged;
+        Lifecycle.OnStopped -= OnAppStopped;
+        Lifecycle.OnResumed -= OnAppResumed;
         StopRefreshTimer();
         try { _ = JS.InvokeVoidAsync("pullRefresh.dispose", "qb-content"); } catch { }
         _selfRef?.Dispose();

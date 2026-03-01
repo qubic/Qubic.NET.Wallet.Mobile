@@ -270,7 +270,7 @@ else
             _addLabel = null;
             _addAddress = null;
             _showAdd = false;
-            _ = FetchData(addr);
+            FetchData(addr).FireAndForget();
         }
         catch (Exception ex)
         {

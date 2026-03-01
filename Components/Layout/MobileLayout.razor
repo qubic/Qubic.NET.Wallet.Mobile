@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @inject SeedSessionService Seed
 @inject TickMonitorService TickMonitor
+@inject BalanceService BalanceSvc
 @inject VaultService Vault
 @inject WalletStorageService WalletStorage
 @inject TransactionTrackerService TxTracker
@@ -12,9 +13,9 @@
 <div class="qb-app">
     <!-- Top Bar -->
     <header class="qb-topbar">
-        <img src="qubic-icon.svg" alt="Qubic" class="qb-topbar-logo" />
+        <img src="qubic-icon.svg" alt="Qubic" class="qb-topbar-icon" />
 
-        <div class="qb-topbar-status">
+        <div class="qb-topbar-center">
             @if (Seed.HasSeed)
             {
                 <span class="badge-qb-cyan qb-wallet-badge" @onclick="ToggleWalletMenu" title="Switch wallet">
@@ -23,6 +24,9 @@
                     {
                         <i class="bi bi-chevron-down" style="font-size:0.55rem;margin-left:0.15rem"></i>
                     }
+                </span>
+                <span class="mono qb-topbar-balance">
+                    @FormatBalance(BalanceSvc.Balance)
                 </span>
 
                 @if (_showWalletMenu && Vault.IsUnlocked && Vault.Entries.Count > 1)
@@ -40,29 +44,33 @@
                     </div>
                 }
             }
+        </div>
 
-            @if (Vault.IsUnlocked)
-            {
-                <span class="badge-qb-success" title="Vault unlocked"><i class="bi bi-unlock-fill"></i></span>
-            }
-            else if (Vault.VaultExists)
-            {
-                <span class="badge-qb-warning" title="Vault locked"><i class="bi bi-lock-fill"></i></span>
-            }
-
+        <div class="qb-topbar-end">
             @if (TickMonitor.IsConnected)
             {
-                <span class="badge-qb-success mono">E@(TickMonitor.Epoch) T@(TickMonitor.Tick)</span>
+                <span class="badge-qb-success qb-connection-badge" @onclick="ToggleTickInfo" title="Connected">
+                    <i class="bi bi-wifi"></i>
+                </span>
             }
             else
             {
-                <span class="badge-qb-warning">Offline</span>
+                <span class="badge-qb-warning qb-connection-badge" title="Offline">
+                    <i class="bi bi-wifi-off"></i>
+                </span>
             }
         </div>
+
+        @if (_showTickInfo && TickMonitor.IsConnected)
+        {
+            <div class="qb-tick-popup">
+                <span class="mono small">Epoch @(TickMonitor.Epoch) &middot; Tick @(TickMonitor.Tick)</span>
+            </div>
+        }
     </header>
 
     <!-- Page Content -->
-    <main class="qb-content" id="qb-content" @onclick="CloseWalletMenu">
+    <main class="qb-content" id="qb-content" @onclick="CloseOverlays">
         <ErrorBoundary @ref="_errorBoundary">
             <ChildContent>
                 @Body
@@ -87,6 +95,7 @@
 @code {
     ErrorBoundary? _errorBoundary;
     bool _showWalletMenu;
+    bool _showTickInfo;
 
     string WalletDisplayName
     {
@@ -102,15 +111,34 @@
 
     static string FormatId(string id) => id.Length >= 8 ? $"{id[..4]}...{id[^4..]}" : id;
 
+    static string FormatBalance(long? balance)
+    {
+        if (balance is not { } b) return "—";
+        return b switch
+        {
+            >= 1_000_000_000 => $"{b / 1_000_000_000.0:0.#} bQU",
+            >= 1_000_000 => $"{b / 1_000_000.0:0.#} mQU",
+            _ => $"{b:N0} QU"
+        };
+    }
+
     void ToggleWalletMenu()
     {
         if (Vault.IsUnlocked && Vault.Entries.Count > 1)
             _showWalletMenu = !_showWalletMenu;
+        _showTickInfo = false;
     }
 
-    void CloseWalletMenu()
+    void ToggleTickInfo()
+    {
+        _showTickInfo = !_showTickInfo;
+        _showWalletMenu = false;
+    }
+
+    void CloseOverlays()
     {
         if (_showWalletMenu) _showWalletMenu = false;
+        if (_showTickInfo) _showTickInfo = false;
     }
 
     void RecoverFromError()
@@ -136,6 +164,7 @@
         TickMonitor.OnTickChanged += OnStateChanged;
         Seed.OnSeedChanged += OnStateChanged;
         Vault.OnVaultChanged += OnStateChanged;
+        BalanceSvc.OnBalanceChanged += OnStateChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -158,5 +187,6 @@
         TickMonitor.OnTickChanged -= OnStateChanged;
         Seed.OnSeedChanged -= OnStateChanged;
         Vault.OnVaultChanged -= OnStateChanged;
+        BalanceSvc.OnBalanceChanged -= OnStateChanged;
     }
 }

@@ -276,70 +276,10 @@ else
                    placeholder="Tx hash" @onchange="e => { _logTxHash = e.Value?.ToString(); _logOffset = 0; LoadLogs(); }" />
         </div>
 
-        @if (_logs == null)
-        {
-            <div class="text-center text-muted py-3"><i class="bi bi-arrow-clockwise"></i> Loading...</div>
-        }
-        else if (_logs.Count == 0)
-        {
-            <div class="text-center text-muted py-4">
-                <i class="bi bi-journal" style="font-size:2rem"></i>
-                <p class="mt-2">No log events found.</p>
-            </div>
-        }
-        else
-        {
-            @foreach (var log in _logs)
-            {
-                var expanded = _expandedLogId == (log.Epoch, log.LogId);
-                <div class="card" @onclick="() => _expandedLogId = expanded ? null : (log.Epoch, log.LogId)">
-                    <div class="card-body py-2">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <div class="d-flex align-items-center gap-1">
-                                    @LogTypeBadge(log.LogType)
-                                    <span class="mono text-muted" style="font-size:0.7rem">T@(log.Tick)</span>
-                                </div>
-                                <div class="small mt-1">@LogSummary(log)</div>
-                            </div>
-                            <div class="text-end">
-                                <span class="mono text-muted" style="font-size:0.6rem">E@(log.Epoch)</span>
-                            </div>
-                        </div>
+        <LogEventList Logs="_logs" />
 
-                        @if (expanded)
-                        {
-                            <div class="mt-2 pt-2 small" style="border-top:1px solid var(--qb-border)" @onclick:stopPropagation>
-                                @if (log.TxHash != null)
-                                {
-                                    <div class="mb-1"><strong>Tx Hash:</strong></div>
-                                    <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@log.TxHash</div>
-                                }
-                                @if (log.Body != null)
-                                {
-                                    <div class="mb-1"><strong>Body (JSON):</strong></div>
-                                    <pre class="mono p-2 rounded mb-2" style="font-size:0.6rem;background:var(--qb-bg-elevated);white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto">@FormatJson(log.Body)</pre>
-                                }
-                                @if (log.BodyRaw != null)
-                                {
-                                    <div class="mb-1"><strong>Raw Hex:</strong></div>
-                                    <div class="mono text-muted mb-2" style="font-size:0.55rem;word-break:break-all">@log.BodyRaw</div>
-                                }
-                                @if (log.LogDigest != null)
-                                {
-                                    <div class="mb-1"><strong>Digest:</strong></div>
-                                    <div class="mono text-muted mb-2" style="font-size:0.6rem;word-break:break-all">@log.LogDigest</div>
-                                }
-                                <div class="text-muted" style="font-size:0.6rem">
-                                    LogId: @log.LogId | Synced from: @log.SyncedFrom
-                                    @if (log.Timestamp != null) { <span>| @log.Timestamp</span> }
-                                </div>
-                            </div>
-                        }
-                    </div>
-                </div>
-            }
-
+        @if (_logs != null && _logs.Count > 0)
+        {
             <!-- Pagination -->
             <div class="d-flex justify-content-between align-items-center mt-2">
                 <button class="btn btn-sm btn-outline-secondary" disabled="@(_logOffset == 0)"
@@ -390,7 +330,6 @@ else
     uint? _logEpoch;
     string? _logTxHash;
     int _logOffset;
-    (uint Epoch, long LogId)? _expandedLogId;
     WalletSyncService Sync => WalletStorage.Sync;
 
     protected override void OnInitialized()
@@ -531,67 +470,11 @@ else
         catch { _logs = []; }
     }
 
-    RenderFragment LogTypeBadge(int logType) => logType switch
-    {
-        0 => BadgeFragment("Transfer", "badge-qb-cyan"),
-        1 => BadgeFragment("Issue", "badge-qb-gold"),
-        2 or 3 => BadgeFragment("Asset Tx", "badge-qb-cyan"),
-        4 => BadgeFragment("ERR", "badge bg-danger"),
-        5 => BadgeFragment("WARN", "badge bg-warning text-dark"),
-        6 => BadgeFragment("INFO", "badge-qb-success"),
-        7 => BadgeFragment("DBG", "badge bg-secondary"),
-        8 => BadgeFragment("Burn", "badge bg-danger"),
-        _ => BadgeFragment($"Type {logType}", "badge bg-secondary")
-    };
-
-    RenderFragment BadgeFragment(string text, string css) =>
-        @<span class="@css" style="font-size:0.6rem;padding:0.1rem 0.35rem;border-radius:0.25rem">@text</span>;
-
-    string LogSummary(StoredLogEvent log)
-    {
-        if (string.IsNullOrEmpty(log.Body)) return log.LogTypeName ?? $"Type {log.LogType}";
-
-        try
-        {
-            var doc = System.Text.Json.JsonDocument.Parse(log.Body);
-            var root = doc.RootElement;
-
-            return log.LogType switch
-            {
-                0 => $"{Trunc(GetStr(root, "from"))} → {Trunc(GetStr(root, "to"))}: {GetStr(root, "amount")} QU",
-                1 => $"Issued {GetStr(root, "numberOfShares")} {GetStr(root, "name")} by {Trunc(GetStr(root, "issuerIdentity"))}",
-                2 or 3 => $"{Trunc(GetStr(root, "sourceIdentity"))} → {Trunc(GetStr(root, "destIdentity"))}: {GetStr(root, "numberOfShares")} {GetStr(root, "name")}",
-                8 => $"Burn {GetStr(root, "amount")} QU from {Trunc(GetStr(root, "from"))}",
-                >= 4 and <= 7 => $"Contract #{GetStr(root, "_contractIndex")} type {GetStr(root, "_type")}",
-                _ => log.LogTypeName ?? $"Type {log.LogType}"
-            };
-        }
-        catch
-        {
-            return log.LogTypeName ?? $"Type {log.LogType}";
-        }
-    }
-
-    static string GetStr(System.Text.Json.JsonElement el, string prop) =>
-        el.TryGetProperty(prop, out var val) ? val.ToString() : "?";
-
-    static string Trunc(string s) => s.Length > 12 ? s[..12] + "..." : s;
-
     static string FormatTxTime(StoredTransaction tx)
     {
         if (tx.TimestampMs.HasValue)
             return DateTimeOffset.FromUnixTimeMilliseconds(tx.TimestampMs.Value).UtcDateTime.ToString("yyyy-MM-dd HH:mm");
         return $"T{tx.Tick}";
-    }
-
-    static string FormatJson(string json)
-    {
-        try
-        {
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        }
-        catch { return json; }
     }
 
     // ── Common ──

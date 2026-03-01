@@ -1,20 +1,33 @@
 @page "/send"
+@page "/send-many"
+@page "/sendtomany"
+@implements IDisposable
 @inject SeedSessionService Seed
 @inject QubicBackendService Backend
 @inject TickMonitorService TickMonitor
 @inject QubicSettingsService Settings
 @inject TransactionTrackerService TxTracker
 @inject QrScannerService QrScanner
+@inject VaultService Vault
 @inject NavigationManager Nav
 
 <h4>Send QU</h4>
+
+@* ── Tab bar ── *@
+<div class="d-flex gap-1 mb-3">
+    <button class="btn btn-sm @(_activeTab == "Single" ? "btn-primary" : "btn-outline-secondary")"
+            @onclick='() => SetTab("Single")'>Send</button>
+    <button class="btn btn-sm @(_activeTab == "Many" ? "btn-primary" : "btn-outline-secondary")"
+            @onclick='() => SetTab("Many")'>Send to Many</button>
+</div>
 
 @if (!Seed.HasSeed)
 {
     <div class="alert alert-warning">Enter your seed on the Home page first.</div>
 }
-else
+else if (_activeTab == "Single")
 {
+    @* ── Single Send ── *@
     <div class="card">
         <div class="card-body">
             <div class="mb-3">
@@ -51,7 +64,7 @@ else
                 </div>
             }
 
-            <button class="btn btn-primary w-100" disabled="@(!CanSend)" @onclick="Preview">
+            <button class="btn btn-primary w-100" disabled="@(!CanSend)" @onclick="PreviewSingle">
                 @(_sending ? "Sending..." : "Preview & Send")
             </button>
         </div>
@@ -75,8 +88,265 @@ else
         </div>
     }
 }
+else
+{
+    @* ── Send to Many ── *@
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Recipients</span>
+            @if (_fee != null)
+            {
+                <span class="badge bg-info">Fee: @_fee.Value.ToString("N0") QU</span>
+            }
+        </div>
+        <div class="card-body">
+            @for (int i = 0; i < _recipients.Count; i++)
+            {
+                var idx = i;
+                <div class="mb-2 p-2 border rounded">
+                    <div class="mb-1">
+                        <small class="text-muted">Recipient @(idx + 1)</small>
+                        @if (_recipients.Count > 1)
+                        {
+                            <button class="btn btn-sm btn-outline-danger float-end py-0 px-1"
+                                    @onclick="() => _recipients.RemoveAt(idx)">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        }
+                    </div>
+                    <AddressInput Value="@_recipients[idx].Identity"
+                                  ValueChanged="(v) => _recipients[idx].Identity = v"
+                                  Placeholder="Identity (60 chars)" />
+                    <input type="number" class="form-control form-control-sm mt-1" placeholder="Amount (QU)"
+                           @bind="_recipients[idx].Amount" />
+                </div>
+            }
+
+            @if (_recipients.Count < 25)
+            {
+                <button class="btn btn-sm btn-outline-secondary w-100 mb-2" @onclick="AddRecipient">
+                    <i class="bi bi-plus-circle me-1"></i>Add Recipient
+                </button>
+            }
+
+            <button class="btn btn-sm btn-outline-primary w-100 mb-2" @onclick="() => _showImport = !_showImport">
+                <i class="bi bi-upload me-1"></i>@(_showImport ? "Hide Import" : "Import from Text")
+            </button>
+
+            @if (_showImport)
+            {
+                <div class="card mb-2 bg-body-secondary">
+                    <div class="card-body py-2">
+                        <small class="text-muted">One per line: <code>IDENTITY,AMOUNT</code> or <code>IDENTITY AMOUNT</code></small>
+                        <textarea class="form-control form-control-sm mono mt-1" rows="4"
+                                  placeholder="AAAAAA...AA,1000000&#10;BBBBBB...BB 2000000"
+                                  @bind="_importText"></textarea>
+                        <div class="d-flex gap-2 mt-1">
+                            <button class="btn btn-sm btn-primary flex-fill" @onclick="ImportRecipients">Import</button>
+                            <button class="btn btn-sm btn-outline-secondary flex-fill"
+                                    @onclick="() => { _showImport = false; _importText = null; _importError = null; }">Cancel</button>
+                        </div>
+                        @if (_importError != null)
+                        {
+                            <div class="text-danger small mt-1">@_importError</div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* Templates *@
+            @if (Vault.IsUnlocked)
+            {
+                <div class="card mb-2 bg-body-secondary">
+                    <div class="card-body py-2">
+                        <small class="text-muted fw-bold">Templates</small>
+                        @if (Vault.Templates.Count > 0)
+                        {
+                            <select class="form-select form-select-sm mt-1" @bind="_selectedTemplate">
+                                <option value="">-- Select Template --</option>
+                                @foreach (var t in Vault.Templates)
+                                {
+                                    <option value="@t.Name">@t.Name (@t.Recipients.Count)</option>
+                                }
+                            </select>
+                            <div class="d-flex gap-1 mt-1">
+                                <button class="btn btn-sm btn-outline-primary flex-fill"
+                                        disabled="@(string.IsNullOrEmpty(_selectedTemplate))" @onclick="LoadTemplate">
+                                    Load
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary flex-fill"
+                                        disabled="@(string.IsNullOrEmpty(_selectedTemplate) || RecipientsWithAddress.Count() == 0)"
+                                        @onclick="OverwriteTemplate">
+                                    Overwrite
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger flex-fill"
+                                        disabled="@(string.IsNullOrEmpty(_selectedTemplate))"
+                                        @onclick="() => _confirmDeleteTemplate = _selectedTemplate">
+                                    Delete
+                                </button>
+                            </div>
+                        }
+                        @if (!_showSaveAs)
+                        {
+                            <button class="btn btn-sm btn-outline-success w-100 mt-1"
+                                    disabled="@(RecipientsWithAddress.Count() == 0)"
+                                    @onclick="() => _showSaveAs = true">
+                                <i class="bi bi-save me-1"></i>Save As Template
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="d-flex gap-1 mt-1">
+                                <input type="text" class="form-control form-control-sm"
+                                       @bind="_saveAsName" @onkeydown="OnSaveAsKey" placeholder="Template name" />
+                                <button class="btn btn-sm btn-success" @onclick="SaveAsTemplate">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        @onclick="() => { _showSaveAs = false; _saveAsName = null; _templateError = null; }">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        }
+                        @if (_templateError != null)
+                        {
+                            <div class="text-danger small mt-1">@_templateError</div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <hr />
+
+            @* Target Tick *@
+            <div class="mb-2">
+                <small class="text-muted">Target Tick</small>
+                <div class="input-group input-group-sm">
+                    <input type="number" class="form-control" @bind="_manyTargetTick" />
+                    @if (_manyTargetTick == 0 && TickMonitor.IsConnected)
+                    {
+                        <span class="input-group-text bg-success text-white small">
+                            Auto: @((TickMonitor.Tick + (uint)Settings.TickOffset).ToString("N0"))
+                        </span>
+                    }
+                    else if (_manyTargetTick == 0)
+                    {
+                        <span class="input-group-text text-muted small">Auto +@Settings.TickOffset</span>
+                    }
+                    else
+                    {
+                        <button class="btn btn-outline-secondary" @onclick="() => _manyTargetTick = 0">Auto</button>
+                    }
+                </div>
+            </div>
+
+            @* Summary *@
+            <div class="card bg-body-secondary mb-2">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between small">
+                        <span>Recipients</span>
+                        <strong>@ValidRecipients.Count()</strong>
+                    </div>
+                    <div class="d-flex justify-content-between small">
+                        <span>Total Amount</span>
+                        <strong class="mono">@ValidRecipients.Sum(r => r.Amount).ToString("N0") QU</strong>
+                    </div>
+                    @if (_fee != null)
+                    {
+                        <div class="d-flex justify-content-between small">
+                            <span>Fee</span>
+                            <span class="mono">@_fee.Value.ToString("N0") QU</span>
+                        </div>
+                        <hr class="my-1" />
+                        <div class="d-flex justify-content-between small fw-bold">
+                            <span>Grand Total</span>
+                            <span class="mono">@((ValidRecipients.Sum(r => r.Amount) + _fee.Value).ToString("N0")) QU</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <button class="btn btn-primary w-100" @onclick="SendMany" disabled="@_manySending">
+                @(_manySending ? "Sending..." : "Sign & Broadcast")
+            </button>
+
+            @if (_manyResult != null)
+            {
+                <div class="alert alert-success mt-2 small">
+                    Transaction broadcast!
+                    <div class="mt-1">
+                        <TxHashDisplay Hash="@_manyResult" ShowFull="true" />
+                    </div>
+                    <div class="mt-1">
+                        <a href="/history"><i class="bi bi-clock-history me-1"></i>Track in History</a>
+                    </div>
+                </div>
+
+                @if (Vault.IsUnlocked)
+                {
+                    @foreach (var r in _unknownRecipients)
+                    {
+                        <div class="alert alert-info mt-1 py-2 small">
+                            <div class="mb-1">
+                                <i class="bi bi-person-plus me-1"></i>
+                                Save <span class="mono">@r.Identity[..12]...</span> to address book?
+                            </div>
+                            <div class="d-flex gap-1">
+                                <input type="text" class="form-control form-control-sm"
+                                       @bind="r.Label" placeholder="Label" />
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => SaveRecipientContact(r)">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => _unknownRecipients.Remove(r)">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                    }
+                }
+            }
+
+            @if (_manyError != null)
+            {
+                <div class="alert alert-danger mt-2 small">@_manyError</div>
+            }
+        </div>
+    </div>
+}
+
+<ConfirmModal Visible="@(_confirmDeleteTemplate != null)"
+             Title="Delete Template"
+             Message="@($"Delete template \"{_confirmDeleteTemplate}\"?")"
+             ConfirmText="Delete"
+             OnConfirm="ConfirmDeleteTemplate"
+             OnCancel="() => _confirmDeleteTemplate = null" />
 
 @code {
+    string _activeTab = "Single";
+    bool _disposed;
+
+    void SetTab(string tab) { _activeTab = tab; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Auto-select tab based on route
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var path = uri.AbsolutePath.TrimEnd('/').ToLowerInvariant();
+        if (path is "/send-many" or "/sendtomany")
+            _activeTab = "Many";
+
+        TickMonitor.OnTickChanged += OnTickChanged;
+        await LoadFee();
+    }
+
+    void OnTickChanged()
+    {
+        if (_disposed) return;
+        InvokeAsync(() => { if (!_disposed) StateHasChanged(); });
+    }
+
+    void GoToHistory() => Nav.NavigateTo("/history");
+
+    // ══════════════════════════════════════════
+    // Single Send
+    // ══════════════════════════════════════════
+
     string? _destination;
     long? _amount;
     string? _error;
@@ -85,8 +355,6 @@ else
     bool _sending;
 
     bool CanSend => !_sending && _destination?.Length == 60 && _amount > 0 && TickMonitor.IsConnected;
-
-    void GoToHistory() => Nav.NavigateTo("/history");
 
     async Task ScanDestination()
     {
@@ -98,7 +366,7 @@ else
         }
     }
 
-    void Preview()
+    void PreviewSingle()
     {
         _error = null;
         _txResult = null;
@@ -123,32 +391,16 @@ else
         _error = null;
         try
         {
-            var targetTick = TickMonitor.Tick + (uint)Settings.TickOffset;
+            var targetTick = await TransactionHelper.ResolveTargetTickAsync(Backend, TickMonitor, Settings);
             if (!QubicIdentity.TryParse(_destination, out var dest))
             {
                 _error = "Invalid identity format.";
                 return;
             }
             var tx = Seed.CreateAndSignTransfer(dest, _amount.Value, targetTick);
-            var result = await Backend.BroadcastTransactionAsync(tx);
-            if (!string.IsNullOrEmpty(result.TransactionId))
-            {
-                _txResult = result.TransactionId;
-                _showPreview = false;
-                TxTracker.Track(new TrackedTransaction
-                {
-                    Hash = result.TransactionId,
-                    Source = Seed.Identity?.ToString() ?? "",
-                    Destination = _destination,
-                    Amount = _amount.Value,
-                    TargetTick = targetTick,
-                    Description = "Send QU"
-                });
-            }
-            else
-            {
-                _error = "Broadcast failed.";
-            }
+            _txResult = await TransactionHelper.BroadcastAndTrackAsync(
+                Backend, TxTracker, Seed, tx, _destination, _amount.Value, targetTick, "Send QU");
+            _showPreview = false;
         }
         catch (Exception ex)
         {
@@ -158,5 +410,234 @@ else
         {
             _sending = false;
         }
+    }
+
+    // ══════════════════════════════════════════
+    // Send to Many
+    // ══════════════════════════════════════════
+
+    class ManyRecipient { public string Identity { get; set; } = ""; public long Amount { get; set; } }
+    string? _confirmDeleteTemplate;
+
+    readonly List<ManyRecipient> _recipients = [new()];
+    uint _manyTargetTick;
+    bool _manySending;
+    string? _manyResult;
+    string? _manyError;
+    long? _fee;
+    bool _showImport;
+    string? _importText;
+    string? _importError;
+
+    // Save to address book
+    class UnknownRecipient { public string Identity { get; set; } = ""; public string? Label { get; set; } }
+    readonly List<UnknownRecipient> _unknownRecipients = [];
+
+    void SaveRecipientContact(UnknownRecipient r)
+    {
+        if (string.IsNullOrWhiteSpace(r.Label)) return;
+        try { Vault.AddContact(r.Label, r.Identity.Trim()); } catch { }
+        _unknownRecipients.Remove(r);
+    }
+
+    // Templates
+    string? _selectedTemplate;
+    bool _showSaveAs;
+    string? _saveAsName;
+    string? _templateError;
+
+    IEnumerable<ManyRecipient> RecipientsWithAddress =>
+        _recipients.Where(r => !string.IsNullOrWhiteSpace(r.Identity));
+
+    void LoadTemplate()
+    {
+        _templateError = null;
+        if (string.IsNullOrEmpty(_selectedTemplate)) return;
+        var template = Vault.Templates.FirstOrDefault(t => t.Name == _selectedTemplate);
+        if (template == null) { _templateError = "Template not found."; return; }
+
+        _recipients.Clear();
+        foreach (var r in template.Recipients)
+            _recipients.Add(new ManyRecipient { Identity = r.Address, Amount = r.Amount });
+        if (_recipients.Count == 0) _recipients.Add(new());
+    }
+
+    void SaveAsTemplate()
+    {
+        _templateError = null;
+        if (string.IsNullOrWhiteSpace(_saveAsName)) { _templateError = "Name is required."; return; }
+        var toSave = RecipientsWithAddress.ToList();
+        if (toSave.Count == 0) { _templateError = "Add at least one address."; return; }
+
+        try
+        {
+            Vault.AddTemplate(_saveAsName.Trim(), toSave.Select(r =>
+                new SendManyRecipient { Address = r.Identity.Trim(), Amount = r.Amount }).ToList());
+            _selectedTemplate = _saveAsName.Trim();
+            _showSaveAs = false;
+            _saveAsName = null;
+        }
+        catch (Exception ex) { _templateError = ex.Message; }
+    }
+
+    void OverwriteTemplate()
+    {
+        _templateError = null;
+        if (string.IsNullOrEmpty(_selectedTemplate)) return;
+        var toSave = RecipientsWithAddress.ToList();
+        if (toSave.Count == 0) { _templateError = "Add at least one address."; return; }
+
+        try
+        {
+            Vault.UpdateTemplate(_selectedTemplate, toSave.Select(r =>
+                new SendManyRecipient { Address = r.Identity.Trim(), Amount = r.Amount }).ToList());
+        }
+        catch (Exception ex) { _templateError = ex.Message; }
+    }
+
+    void ConfirmDeleteTemplate()
+    {
+        _templateError = null;
+        if (string.IsNullOrEmpty(_confirmDeleteTemplate)) return;
+        try
+        {
+            Vault.RemoveTemplate(_confirmDeleteTemplate);
+            if (_selectedTemplate == _confirmDeleteTemplate) _selectedTemplate = null;
+        }
+        catch (Exception ex) { _templateError = ex.Message; }
+        _confirmDeleteTemplate = null;
+    }
+
+    void OnSaveAsKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") SaveAsTemplate();
+        else if (e.Key == "Escape") { _showSaveAs = false; _saveAsName = null; _templateError = null; }
+    }
+
+    IEnumerable<ManyRecipient> ValidRecipients =>
+        _recipients.Where(r => !string.IsNullOrWhiteSpace(r.Identity) && r.Amount > 0);
+
+    async Task LoadFee()
+    {
+        try
+        {
+            // QUtil contract 4, GetSendToManyV1Fee = function 1, empty input
+            var result = await Backend.QuerySmartContractAsync(4, 1, []);
+            if (result.Length >= 8)
+                _fee = BitConverter.ToInt64(result, 0);
+        }
+        catch { /* fee display is best-effort */ }
+    }
+
+    void AddRecipient() { if (_recipients.Count < 25) _recipients.Add(new()); }
+
+    void ImportRecipients()
+    {
+        _importError = null;
+        if (string.IsNullOrWhiteSpace(_importText)) { _importError = "Nothing to import."; return; }
+
+        var lines = _importText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var imported = new List<ManyRecipient>();
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            // Try comma, semicolon, tab, or space as separator
+            string[] parts;
+            if (line.Contains(',')) parts = line.Split(',', 2, StringSplitOptions.TrimEntries);
+            else if (line.Contains(';')) parts = line.Split(';', 2, StringSplitOptions.TrimEntries);
+            else if (line.Contains('\t')) parts = line.Split('\t', 2, StringSplitOptions.TrimEntries);
+            else parts = line.Split(' ', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length != 2 || !long.TryParse(parts[1], out var amount))
+            {
+                _importError = $"Line {i + 1}: Invalid format. Expected 'IDENTITY,AMOUNT'.";
+                return;
+            }
+
+            var identity = parts[0].Trim();
+            var idErr = IdentityValidation.Validate(identity);
+            if (idErr != null)
+            {
+                _importError = $"Line {i + 1}: {idErr}";
+                return;
+            }
+
+            imported.Add(new ManyRecipient { Identity = identity, Amount = amount });
+        }
+
+        if (imported.Count == 0) { _importError = "No valid entries found."; return; }
+        if (imported.Count > 25) { _importError = $"Too many recipients ({imported.Count}). Max is 25."; return; }
+
+        _recipients.Clear();
+        _recipients.AddRange(imported);
+        _showImport = false;
+        _importText = null;
+    }
+
+    async Task SendMany()
+    {
+        _manySending = true;
+        _manyError = null;
+        _manyResult = null;
+
+        try
+        {
+            var valid = ValidRecipients.ToList();
+            if (valid.Count == 0)
+            {
+                _manyError = "Add at least one recipient with an amount.";
+                return;
+            }
+            for (int i = 0; i < valid.Count; i++)
+            {
+                var idErr = IdentityValidation.Validate(valid[i].Identity);
+                if (idErr != null)
+                {
+                    _manyError = $"Recipient {i + 1}: {idErr}";
+                    return;
+                }
+            }
+
+            #pragma warning disable CS0618
+            var payload = new SendManyPayload();
+            #pragma warning restore CS0618
+            foreach (var r in valid)
+            {
+                payload.AddTransfer(QubicIdentity.FromIdentity(r.Identity.Trim()), r.Amount);
+            }
+
+            var tick = await TransactionHelper.ResolveTargetTickAsync(Backend, TickMonitor, Settings, _manyTargetTick);
+
+            var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(QubicContracts.Qutil));
+            var totalAmount = payload.TotalAmount + (_fee ?? 0);
+            _manyResult = await TransactionHelper.BroadcastContractCallAsync(
+                Backend, TxTracker, Seed, dest, totalAmount, tick, payload,
+                $"SendToMany: {payload.Transfers.Count} recipients, {payload.TotalAmount:N0} QU + {(_fee ?? 0):N0} fee");
+
+            // Collect unknown recipients for address book prompt
+            _unknownRecipients.Clear();
+            if (Vault.IsUnlocked)
+            {
+                foreach (var r in valid.Where(r => !Vault.IsKnownAddress(r.Identity.Trim())))
+                    _unknownRecipients.Add(new UnknownRecipient { Identity = r.Identity.Trim() });
+            }
+        }
+        catch (Exception ex)
+        {
+            _manyError = ex.Message;
+        }
+        finally
+        {
+            _manySending = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        TickMonitor.OnTickChanged -= OnTickChanged;
     }
 }

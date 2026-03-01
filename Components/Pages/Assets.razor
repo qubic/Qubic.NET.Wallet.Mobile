@@ -495,23 +495,13 @@ else
 
     // ── Execute Actions ──
 
-    async Task<uint> GetTick() => TickMonitor.IsConnected
-        ? TickMonitor.Tick + (uint)Settings.TickOffset
-        : (await Backend.GetTickInfoAsync()).Tick + (uint)Settings.TickOffset;
+    async Task<uint> GetTick() => await TransactionHelper.ResolveTargetTickAsync(Backend, TickMonitor, Settings);
 
     async Task BroadcastQx(long amount, uint tick, Qubic.Core.Payloads.ITransactionPayload payload, string desc)
     {
         var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(QxContractIndex));
-        var tx = Seed.CreateAndSignTransaction(dest, amount, tick, payload);
-        var result = await Backend.BroadcastTransactionAsync(tx);
-        _actionResult = result.TransactionId;
-        TxTracker.Track(new TrackedTransaction
-        {
-            Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
-            Destination = dest.ToString(), Amount = amount, TargetTick = tick,
-            InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
-            Description = desc, RawData = Convert.ToHexString(tx.GetRawBytes())
-        });
+        _actionResult = await TransactionHelper.BroadcastContractCallAsync(
+            Backend, TxTracker, Seed, dest, amount, tick, payload, desc);
     }
 
     async Task ExecuteTransfer()
@@ -600,17 +590,9 @@ else
                 _actionAsset.ManagingContractIndex, asset, _actionShares, (uint)_actionContractIdx);
             var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(_actionAsset.ManagingContractIndex));
             var rightsFee = StaticData.GetContractFee(_actionAsset.ManagingContractIndex, "Transfer Share Management Rights") ?? 0;
-            var tx = Seed.CreateAndSignTransaction(dest, (long)rightsFee, tick, payload);
-            var result = await Backend.BroadcastTransactionAsync(tx);
-            _actionResult = result.TransactionId;
-            TxTracker.Track(new TrackedTransaction
-            {
-                Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
-                Destination = dest.ToString(), Amount = (long)rightsFee, TargetTick = tick,
-                InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
-                Description = $"Rights {_actionAsset.Name}: {_actionShares:N0} → {QubicContracts.GetContractName(_actionContractIdx) ?? $"#{_actionContractIdx}"}",
-                RawData = Convert.ToHexString(tx.GetRawBytes())
-            });
+            _actionResult = await TransactionHelper.BroadcastContractCallAsync(
+                Backend, TxTracker, Seed, dest, (long)rightsFee, tick, payload,
+                $"Rights {_actionAsset.Name}: {_actionShares:N0} → {QubicContracts.GetContractName(_actionContractIdx) ?? $"#{_actionContractIdx}"}");
         }
         catch (Exception ex) { _actionError = ex.Message; }
         finally { _actionSending = false; }
@@ -640,16 +622,9 @@ else
                 };
             }
             var dest = QubicIdentity.FromPublicKey(QubicContracts.GetContractPublicKey(QxContractIndex));
-            var tx = Seed.CreateAndSignTransaction(dest, 0, tick, payload);
-            var result = await Backend.BroadcastTransactionAsync(tx);
-            TxTracker.Track(new TrackedTransaction
-            {
-                Hash = result.TransactionId, Source = Seed.Identity?.ToString() ?? "",
-                Destination = dest.ToString(), Amount = 0, TargetTick = tick,
-                InputType = payload.InputType, PayloadHex = Convert.ToHexString(payload.GetPayloadBytes()),
-                Description = $"Cancel {(order.IsBid ? "Buy" : "Sell")} {order.AssetName}: {order.Shares:N0} @ {order.Price:N0}",
-                RawData = Convert.ToHexString(tx.GetRawBytes())
-            });
+            await TransactionHelper.BroadcastContractCallAsync(
+                Backend, TxTracker, Seed, dest, 0, tick, payload,
+                $"Cancel {(order.IsBid ? "Buy" : "Sell")} {order.AssetName}: {order.Shares:N0} @ {order.Price:N0}");
             _myOrders?.Remove(order);
         }
         catch (Exception ex) { _error = ex.Message; }
