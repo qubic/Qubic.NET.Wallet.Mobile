@@ -1,5 +1,32 @@
 # Release Notes
 
+## v0.5.0
+
+### Upgrade
+- Upgraded to **.NET 10** and **MAUI 10** (net10.0-android)
+- Synced Qubic.Net library to latest upstream
+- Updated BarcodeScanning.Native.Maui to 3.0.3
+
+### Fixes
+- Fixed viewport overlapping Android status bar and navigation bar (safe area insets)
+- Fixed SC Auctions page not found (route mismatch)
+- Fixed deprecated `Rfc2898DeriveBytes` constructor (SYSLIB0060)
+
+### Improvements
+- **Send & Send to Many merged** into a single page with tabs
+- **Top bar reworked** — balance displayed inline next to wallet name with compact format (mQU/bQU), epoch/tick replaced with tap-to-reveal connection indicator, removed non-functional vault icon
+- **Central BalanceService** — balance stays in sync across all pages, auto-refreshes every 30 ticks and on identity switch
+
+### Downloads
+
+| Platform | File |
+|----------|------|
+| Android | `org.qubic.lab.wallet-0.5.0.apk` |
+
+Verify downloads with the `.sha256` file included alongside the APK.
+
+---
+
 ## v0.3.0
 
 ### New Features
