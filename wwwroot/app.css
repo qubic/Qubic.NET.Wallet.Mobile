@@ -82,6 +82,11 @@
     --bs-link-color: var(--qb-accent-cyan);
     --bs-link-hover-color: var(--qb-accent-cyan-muted);
     --bs-emphasis-color: var(--qb-text-primary);
+    --bs-modal-bg: var(--qb-bg-card);
+    --bs-modal-color: var(--qb-text-primary);
+    --bs-modal-border-color: var(--qb-border-strong);
+    --bs-modal-header-border-color: var(--qb-border);
+    --bs-modal-footer-border-color: var(--qb-border);
 }
 
 /* ── Base ── */
@@ -539,4 +544,16 @@ h4 { font-size: 1.15rem; }
 .qb-wallet-dropdown-item.active {
     background: var(--qb-accent-cyan-dim);
     border-left: 2px solid var(--qb-accent-cyan);
+}
+
+/* ── Accent Card Header ── */
+.card-header-accent {
+    background: var(--qb-accent-cyan-dim);
+    color: var(--qb-accent-cyan);
+    border-bottom-color: var(--qb-border-strong);
+}
+
+/* ── Modal Dark Mode Fix ── */
+[data-bs-theme="dark"] .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
 }

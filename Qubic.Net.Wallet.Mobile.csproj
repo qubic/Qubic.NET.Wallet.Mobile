@@ -16,8 +16,8 @@
     <!-- App identifiers -->
     <ApplicationTitle>Qubic Wallet</ApplicationTitle>
     <ApplicationId>org.qubic.lab.wallet</ApplicationId>
-    <ApplicationDisplayVersion>0.5.0</ApplicationDisplayVersion>
-    <ApplicationVersion>5</ApplicationVersion>
+    <ApplicationDisplayVersion>0.5.1</ApplicationDisplayVersion>
+    <ApplicationVersion>6</ApplicationVersion>
 
     <!-- Android -->
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24</SupportedOSPlatformVersion>

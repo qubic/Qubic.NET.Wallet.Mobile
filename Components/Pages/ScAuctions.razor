@@ -36,13 +36,14 @@
                 {
                     @foreach (var ipo in _activeIpos)
                     {
-                        <div class="card mb-2">
+                        <div class="card mb-2" style="cursor:pointer" @onclick="() => NavigateToStatus(ipo.ContractIndex)">
                             <div class="card-body py-2 px-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <span class="fw-bold small">Contract #@ipo.ContractIndex</span>
                                         <span class="badge bg-secondary ms-1">@ipo.AssetName</span>
                                     </div>
+                                    <span class="text-muted small">→</span>
                                 </div>
                                 <div class="small text-muted mt-1">
                                     <AddressDisplay Address="@QubicContracts.GetContractIdentity((int)ipo.ContractIndex).ToString()" TruncateChars="10" ShowCopy="false" />
@@ -74,8 +75,8 @@
                             }
                         </select>
                     }
-                    <input type="number" class="form-control form-control-sm" min="1" max="23" @bind="_statusContractIndex"
-                           placeholder="Or enter contract index (1-23)" />
+                    <input type="number" class="form-control form-control-sm" min="1" max="1023" @bind="_statusContractIndex"
+                           placeholder="Or enter contract index" />
                 </div>
                 <button class="btn btn-primary w-100" @onclick="LookupStatus" disabled="@_statusLoading">
                     @(_statusLoading ? "Looking up..." : "Lookup")
@@ -83,7 +84,10 @@
 
                 @if (Backend.ActiveBackend != QueryBackend.DirectNetwork)
                 {
-                    <div class="alert alert-warning mt-2 small py-1">This feature requires DirectNetwork backend.</div>
+                    <div class="alert alert-warning mt-2 small py-1 d-flex align-items-center justify-content-between">
+                        <span>Requires DirectNetwork backend.</span>
+                        <button class="btn btn-sm btn-warning ms-2" @onclick="SwitchToDirectNetwork">Switch</button>
+                    </div>
                 }
 
                 @if (_ipoStatus != null)
@@ -104,17 +108,44 @@
                     @if (Seed.HasSeed && _mySlots.Count > 0)
                     {
                         <div class="card mt-3 border-primary">
-                            <div class="card-header small fw-bold">My Bids</div>
+                            <div class="card-header small fw-bold d-flex justify-content-between align-items-center">
+                                <span>My Bids</span>
+                                @if (_mySlots.Any(s => s.Price == _minBid))
+                                {
+                                    <span class="badge bg-warning text-dark">⚠ At Risk</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success">✓ Safe</span>
+                                }
+                            </div>
                             <div class="card-body py-2 small">
-                                <div class="mb-2">
-                                    <strong>@_mySlots.Count</strong> slot@(_mySlots.Count != 1 ? "s" : "")
-                                    | Total: <strong class="mono">@_mySlots.Sum(s => s.Price).ToString("N0") QU</strong>
+                                <div class="mb-2 text-muted">
+                                    @_mySlots.Count slot@(_mySlots.Count != 1 ? "s" : "") · Total: <strong class="mono">@_mySlots.Sum(s => s.Price).ToString("N0") QU</strong>
                                 </div>
                                 @foreach (var slot in _mySlots)
                                 {
-                                    <div class="d-flex justify-content-between border-bottom py-1">
-                                        <span class="mono">Slot #@slot.Index</span>
-                                        <span class="mono">@slot.Price.ToString("N0") QU</span>
+                                    var rank = _allSlots.FindIndex(s => s.Index == slot.Index) + 1;
+                                    var atRisk = _filledSlots >= QubicConstants.NumberOfComputors && slot.Price == _minBid;
+                                    <div class="border-bottom py-1">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <span class="mono">Slot #@slot.Index</span>
+                                            <span>
+                                                @if (atRisk)
+                                                {
+                                                    <span class="badge bg-warning text-dark me-1">At Risk</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-success me-1">Safe</span>
+                                                }
+                                                <span class="mono">#@rank</span>
+                                            </span>
+                                        </div>
+                                        <div class="d-flex justify-content-between text-muted">
+                                            <AddressDisplay Address="@slot.Identity" TruncateChars="10" ShowCopy="false" />
+                                            <span class="mono">@slot.Price.ToString("N0") QU</span>
+                                        </div>
                                     </div>
                                 }
                             </div>
@@ -173,8 +204,8 @@
                                 }
                             </select>
                         }
-                        <input type="number" class="form-control form-control-sm" min="1" max="23" @bind="_bidContractIndex"
-                               placeholder="Or enter contract index (1-23)" />
+                        <input type="number" class="form-control form-control-sm" min="1" max="1023" @bind="_bidContractIndex"
+                               placeholder="Or enter contract index" />
                     </div>
                     <div class="mb-2">
                         <label class="small text-muted">Price per Share (QU)</label>
@@ -184,10 +215,10 @@
                         <label class="small text-muted">Number of Shares (1-676)</label>
                         <input type="number" class="form-control form-control-sm" min="1" max="676" @bind="_bidQuantity" />
                     </div>
-                    @if (_bidPrice > 0 && _bidQuantity > 0)
-                    {
-                        <div class="small text-muted mb-2">Total cost: <strong>@((_bidPrice * _bidQuantity).ToString("N0")) QU</strong></div>
-                    }
+                    <div class="alert alert-info py-2 mb-2 d-flex justify-content-between align-items-center small">
+                        <span>Total to pay:</span>
+                        <strong class="mono">@((_bidPrice > 0 && _bidQuantity > 0 ? _bidPrice * _bidQuantity : 0).ToString("N0")) QU</strong>
+                    </div>
 
                     @if (!_bidConfirmed)
                     {
@@ -240,6 +271,20 @@
 
     private void SetTab(string tab) { _activeTab = tab; _error = null; _result = null; }
 
+    private void SwitchToDirectNetwork()
+    {
+        Backend.ActiveBackend = QueryBackend.DirectNetwork;
+        StateHasChanged();
+    }
+
+    private async Task NavigateToStatus(uint contractIndex)
+    {
+        _statusContractIndex = contractIndex;
+        _activeTab = "Status";
+        _error = null; _result = null;
+        await LookupStatus();
+    }
+
     // -- Browse --
     private bool _browseLoading;
     private IReadOnlyList<IpoInfo>? _activeIpos;
@@ -253,7 +298,7 @@
     private long _maxBid;
     private long _avgBid;
     private long _totalBid;
-    private List<(int Index, long Price)> _mySlots = [];
+    private List<(int Index, string Identity, long Price)> _mySlots = [];
     private List<(int Index, string Identity, long Price)> _allSlots = [];
 
     // -- Bid --
@@ -291,11 +336,11 @@
         _filledSlots = 0; _minBid = 0; _maxBid = 0; _avgBid = 0; _totalBid = 0;
         try
         {
-            if (_statusContractIndex < 1 || _statusContractIndex > 23)
-            { _error = "Contract index must be between 1 and 23."; return; }
+            if (_statusContractIndex < 1 || _statusContractIndex > 1023)
+            { _error = "Contract index must be between 1 and 1023."; return; }
 
             if (Backend.ActiveBackend != QueryBackend.DirectNetwork)
-            { _error = "This feature requires the DirectNetwork backend. Switch to DirectNetwork in Settings."; return; }
+            { _error = "This feature requires the DirectNetwork backend."; return; }
 
             _ipoStatus = await Backend.GetIpoStatusAsync(_statusContractIndex);
             ComputeStatusSummary();
@@ -321,7 +366,7 @@
             filled.Add((i, identity.Value.ToString(), price));
 
             if (myPk != null && _ipoStatus.PublicKeys[i].AsSpan().SequenceEqual(myPk))
-                _mySlots.Add((i, price));
+                _mySlots.Add((i, identity.Value.ToString(), price));
         }
 
         _filledSlots = filled.Count;
@@ -341,8 +386,8 @@
     private async Task PreviewBid()
     {
         _error = null; _result = null;
-        if (_bidContractIndex < 1 || _bidContractIndex > 23)
-        { _error = "Contract index must be between 1 and 23."; return; }
+        if (_bidContractIndex < 1 || _bidContractIndex > 1023)
+        { _error = "Contract index must be between 1 and 1023."; return; }
         if (_bidPrice <= 0) { _error = "Price per share must be positive."; return; }
         if (_bidQuantity < 1 || _bidQuantity > 676) { _error = "Number of shares must be 1-676."; return; }
 
