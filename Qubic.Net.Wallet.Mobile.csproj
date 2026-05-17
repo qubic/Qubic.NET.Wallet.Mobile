@@ -39,21 +39,22 @@
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlcipher" Version="2.1.*" />
   </ItemGroup>
 
+  <!--
+    Qubic.Services brings in Core / Crypto / Network / Rpc / Bob / Serialization
+    transitively. We consume the NuGet packages (not the ProjectReferences in
+    deps/Qubic.Net) so the base libs don't need to declare a net10.0-android
+    target framework. See NuGet.config for the local feed during development.
+  -->
   <ItemGroup>
-    <ProjectReference Include="deps\Qubic.Net\src\Qubic.Services\Qubic.Services.csproj" />
+    <PackageReference Include="Qubic.Services" Version="1.4.0" />
   </ItemGroup>
 
-  <!-- Exclude submodule non-service files from Razor/Compile auto-discovery -->
+  <!-- Exclude the Qubic.Net submodule from auto-globbing; it's only kept around
+       for local NuGet pack/publish workflows, not consumed as source. -->
   <ItemGroup>
     <Compile Remove="deps\**" />
     <Content Remove="deps\**" />
     <None Remove="deps\**" />
-  </ItemGroup>
-
-  <!-- Exclude stray .razor files from deps (tools, tests, etc.) -->
-  <ItemGroup>
-    <Content Remove="deps\Qubic.Net\tools\**" />
-    <None Remove="deps\Qubic.Net\tools\**" />
   </ItemGroup>
 
 </Project>
