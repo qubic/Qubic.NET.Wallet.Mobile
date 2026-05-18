@@ -46,7 +46,7 @@
     target framework. See NuGet.config for the local feed during development.
   -->
   <ItemGroup>
-    <PackageReference Include="Qubic.Services" Version="1.4.0" />
+    <PackageReference Include="Qubic.Services" Version="1.4.1" />
   </ItemGroup>
 
   <!-- Exclude the Qubic.Net submodule from auto-globbing; it's only kept around
