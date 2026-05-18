@@ -10,8 +10,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <!-- Exclude deps subdirectories from Razor/Compile auto-globbing -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);deps\Qubic.Net\tools\**;deps\Qubic.Net\test\**;deps\Qubic.Net\tests\**</DefaultItemExcludes>
 
     <!-- App identifiers -->
     <ApplicationTitle>Qubic Wallet</ApplicationTitle>
@@ -41,20 +39,12 @@
 
   <!--
     Qubic.Services brings in Core / Crypto / Network / Rpc / Bob / Serialization
-    transitively. We consume the NuGet packages (not the ProjectReferences in
-    deps/Qubic.Net) so the base libs don't need to declare a net10.0-android
-    target framework. See NuGet.config for the local feed during development.
+    transitively. NuGet's TFM compatibility resolves net10.0 → net10.0-android,
+    so the base libs don't need to declare an android target.
+    See NuGet.config for the local feed during development.
   -->
   <ItemGroup>
     <PackageReference Include="Qubic.Services" Version="1.4.1" />
-  </ItemGroup>
-
-  <!-- Exclude the Qubic.Net submodule from auto-globbing; it's only kept around
-       for local NuGet pack/publish workflows, not consumed as source. -->
-  <ItemGroup>
-    <Compile Remove="deps\**" />
-    <Content Remove="deps\**" />
-    <None Remove="deps\**" />
   </ItemGroup>
 
 </Project>
