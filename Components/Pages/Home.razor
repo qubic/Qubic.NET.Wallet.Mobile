@@ -30,11 +30,7 @@
                 <label class="form-label-sm">Password</label>
                 <input type="password" class="form-control" @bind="_createPassword" @bind:event="oninput"
                        placeholder="Vault password" />
-                @{ var pwErr = VaultService.ValidatePassword(_createPassword); }
-                @if (!string.IsNullOrEmpty(_createPassword) && pwErr != null)
-                {
-                    <div class="form-text text-warning">@pwErr</div>
-                }
+                <PasswordStrengthMeter Password="@_createPassword" />
             </div>
             <div class="mb-3">
                 <label class="form-label-sm">Confirm Password</label>

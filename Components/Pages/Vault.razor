@@ -21,11 +21,7 @@
                 <label class="form-label-sm">Password</label>
                 <input type="password" class="form-control" @bind="_password" @bind:event="oninput"
                        placeholder="Vault password" />
-                @{ var pwErr = VaultService.ValidatePassword(_password); }
-                @if (!string.IsNullOrEmpty(_password) && pwErr != null)
-                {
-                    <div class="form-text text-warning">@pwErr</div>
-                }
+                <PasswordStrengthMeter Password="@_password" />
             </div>
             <div class="mb-3">
                 <label class="form-label-sm">Confirm Password</label>
@@ -314,7 +310,8 @@ else
                     </div>
                     <div class="mb-2">
                         <input type="password" class="form-control form-control-sm"
-                               @bind="_newPassword" placeholder="New password" />
+                               @bind="_newPassword" @bind:event="oninput" placeholder="New password" />
+                        <PasswordStrengthMeter Password="@_newPassword" />
                     </div>
                     <div class="mb-2">
                         <input type="password" class="form-control form-control-sm"

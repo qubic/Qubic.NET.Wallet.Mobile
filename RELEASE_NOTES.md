@@ -1,5 +1,25 @@
 # Release Notes
 
+## v0.6.1
+
+### Security
+- **Vault key derivation upgraded to Argon2id** (`m=64 MiB, t=3, p=1`). Existing vaults written with PBKDF2-HMAC-SHA256 (600 000 iterations) continue to open and silently re-encrypt to Argon2id on the next save.
+- **New vault file format (v2)** carries an explicit `Version`, `Kdf`, and `KdfParams` so future KDF changes can ship without breaking existing files. Legacy v1 envelopes remain readable.
+- **Password validator now uses [zxcvbn](https://github.com/dropbox/zxcvbn) scoring** instead of the character-class checklist. Requires length ≥ 12 and zxcvbn score ≥ 3.
+
+### UI
+- **Live password-strength meter** on the Vault create and change-password screens, plus on the initial Create Vault flow from Home. Color-coded bar, strength label, zxcvbn warning, and improvement suggestions update as you type.
+
+> ⚠️ Vaults saved by v0.6.1 cannot be opened by v0.5.x or earlier. Export/back up your vault before upgrading.
+
+### Downloads
+
+| Platform | File |
+|----------|------|
+| Android | `org.qubic.lab.wallet-0.6.1.apk` |
+
+---
+
 ## v0.5.0
 
 ### Upgrade
