@@ -1,5 +1,19 @@
 # Release Notes
 
+## v0.6.3
+
+### Security — please update immediately
+- **FourQ low-order public-key forgery (CVE-class, exploited in the wild).** The verify path admitted public keys lying in FourQ's 392-element cofactor subgroup — most importantly the identity point `{1,0,0,0}`, which is also the QX contract address. For these keys an attacker can produce a deterministic signature that verifies for any message without knowing a private key. This was used on the live network to move QU from the identity point to attacker-controlled wallets. Patched in `Qubic.Crypto 1.5.2` (mirrors qubic/core PR #921) and pulled in transitively via `Qubic.Services 1.5.2`.
+- No vault, on-disk, or wire-format changes. Pure verify-side hardening.
+
+### Downloads
+
+| Platform | File |
+|----------|------|
+| Android | `org.qubic.lab.wallet-0.6.3.apk` |
+
+---
+
 ## v0.6.2
 
 ### Security
