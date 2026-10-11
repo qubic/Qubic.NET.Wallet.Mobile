@@ -64,29 +64,16 @@ else if (_activeTab == "Single")
                 </div>
             }
 
-            <button class="btn btn-primary w-100" disabled="@(!CanSend)" @onclick="PreviewSingle">
-                @(_sending ? "Sending..." : "Preview & Send")
+            @if (_scanNote != null)
+            {
+                <div class="small mb-2 @(_scanNoteWarning ? "text-warning" : "text-muted")">@_scanNote</div>
+            }
+            <button class="btn btn-primary w-100" disabled="@(!CanSend)" @onclick="ReviewAndSend">
+                <i class="bi bi-pen me-1"></i>@(_sending ? "Sending..." : "Review & Send")
             </button>
         </div>
     </div>
 
-    @if (_showPreview)
-    {
-        <div class="card mt-2">
-            <div class="card-header">Transaction Preview</div>
-            <div class="card-body small">
-                <div class="mb-1"><strong>To:</strong> <span class="mono">@_destination?[..16]...</span></div>
-                <div class="mb-1"><strong>Amount:</strong> @_amount?.ToString("N0") QU</div>
-                <div class="mb-1"><strong>Tick:</strong> @(TickMonitor.Tick + (uint)Settings.TickOffset)</div>
-                <div class="d-flex gap-2 mt-3">
-                    <button class="btn btn-outline-secondary flex-fill" @onclick="() => _showPreview = false">Cancel</button>
-                    <button class="btn btn-primary flex-fill" disabled="@_sending" @onclick="SignAndBroadcast">
-                        <i class="bi bi-pen me-1"></i> Sign & Send
-                    </button>
-                </div>
-            </div>
-        </div>
-    }
 }
 else
 {
@@ -223,13 +210,11 @@ else
                     <input type="number" class="form-control" @bind="_manyTargetTick" />
                     @if (_manyTargetTick == 0 && TickMonitor.IsConnected)
                     {
-                        <span class="input-group-text bg-success text-white small">
-                            Auto: @((TickMonitor.Tick + (uint)Settings.TickOffset).ToString("N0"))
-                        </span>
+                        <TickTargetPreview />
                     }
                     else if (_manyTargetTick == 0)
                     {
-                        <span class="input-group-text text-muted small">Auto +@Settings.TickOffset</span>
+                        <span class="input-group-text text-muted small">Auto</span>
                     }
                     else
                     {
@@ -351,42 +336,56 @@ else
     long? _amount;
     string? _error;
     string? _txResult;
-    bool _showPreview;
     bool _sending;
 
     bool CanSend => !_sending && _destination?.Length == 60 && _amount > 0 && TickMonitor.IsConnected;
 
+    string? _scanNote;
+    bool _scanNoteWarning;
+    string? _paymentMessage;
+
+    /// <summary>Accepts a bare identity or a qubic: payment request (amount, message, network).</summary>
     async Task ScanDestination()
     {
         var result = await QrScanner.ScanAsync();
-        if (!string.IsNullOrEmpty(result))
+        if (string.IsNullOrEmpty(result)) return;
+        _scanNote = null; _scanNoteWarning = false; _paymentMessage = null;
+        if (Qubic.Core.Payments.QubicPaymentRequest.TryParse(result, out var req, out var err) && req != null)
+        {
+            if (req.IsAssetTransfer || req.IsContractCall)
+            {
+                _scanNote = req.IsAssetTransfer
+                    ? $"This requests {req.Amount} {req.AssetName} shares — use Assets to transfer assets."
+                    : "This request is a contract call — not supported here.";
+                _scanNoteWarning = true;
+            }
+            else
+            {
+                _destination = req.Destination;
+                if (req.Amount is { } a) _amount = a;
+                _paymentMessage = req.Message ?? req.Label;
+                _scanNote = _paymentMessage != null ? $"Payment request: {_paymentMessage}" : null;
+                if (req.ChainId != Backend.Profile.ChainId)
+                {
+                    _scanNote = $"This request is for {req.ChainId}, but you are on \"{Backend.Profile.Name}\".";
+                    _scanNoteWarning = true;
+                }
+            }
+        }
+        else
         {
             _destination = result.Trim();
-            StateHasChanged();
+            if (err != null && result.Trim().Length != 60) { _scanNote = err; _scanNoteWarning = true; }
         }
+        StateHasChanged();
     }
 
-    void PreviewSingle()
+    async Task ReviewAndSend()
     {
         _error = null;
         _txResult = null;
-
-        if (_destination?.Length != 60)
-        {
-            _error = "Destination must be a 60-character identity.";
-            return;
-        }
-        if (_amount is null or <= 0)
-        {
-            _error = "Enter a valid amount.";
-            return;
-        }
-        _showPreview = true;
-    }
-
-    async Task SignAndBroadcast()
-    {
-        if (_destination == null || _amount == null) return;
+        if (_destination?.Length != 60) { _error = "Destination must be a 60-character identity."; return; }
+        if (_amount is null or <= 0) { _error = "Enter a valid amount."; return; }
         _sending = true;
         _error = null;
         try
@@ -397,10 +396,15 @@ else
                 _error = "Invalid identity format.";
                 return;
             }
-            var tx = Seed.CreateAndSignTransfer(dest, _amount.Value, targetTick);
+            var description = "Send QU" + (_paymentMessage != null ? $" — {_paymentMessage}" : "");
+            var tx = await Seed.SignTransferAsync(dest, _amount.Value, targetTick,
+                Qubic.Services.Signing.SigningContext.InApp(description));
             _txResult = await TransactionHelper.BroadcastAndTrackAsync(
-                Backend, TxTracker, Seed, tx, _destination, _amount.Value, targetTick, "Send QU");
-            _showPreview = false;
+                Backend, TxTracker, Seed, tx, _destination!, _amount.Value, targetTick, description);
+        }
+        catch (Qubic.Services.Signing.SigningRejectedException)
+        {
+            _error = "Signing cancelled.";
         }
         catch (Exception ex)
         {

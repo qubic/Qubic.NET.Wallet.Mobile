@@ -1,4 +1,5 @@
 @page "/more"
+@inject Qubic.Services.Features.FeatureService Features
 
 <h4>More</h4>
 
@@ -56,6 +57,47 @@
         <a href="/scauctions">
             <i class="bi bi-hammer"></i>
             SC Auctions
+            <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
+        </a>
+    </li>
+    <li>
+        <a href="/networks">
+            <i class="bi bi-hdd-network"></i>
+            Networks
+            <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
+        </a>
+    </li>
+    @if (Features.IsEnabled(Qubic.Services.Features.WalletFeature.WalletConnect))
+    {
+        <li>
+            <a href="/walletconnect">
+                <i class="bi bi-link-45deg"></i>
+                WalletConnect
+                <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
+            </a>
+        </li>
+    }
+    @if (Features.IsEnabled(Qubic.Services.Features.WalletFeature.DeveloperTools))
+    {
+        <li>
+            <a href="/devtools">
+                <i class="bi bi-tools"></i>
+                Dev Tools
+                <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
+            </a>
+        </li>
+        <li>
+            <a href="/contracts">
+                <i class="bi bi-braces"></i>
+                Contract Console
+                <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
+            </a>
+        </li>
+    }
+    <li>
+        <a href="/features">
+            <i class="bi bi-toggles"></i>
+            Features
             <span class="qb-link-chevron"><i class="bi bi-chevron-right"></i></span>
         </a>
     </li>

@@ -8,6 +8,12 @@
 @inject NavigationManager Nav
 @inject QubicSettingsService Settings
 @inject IJSRuntime JS
+@inject Qubic.Services.Networks.NetworkProfileService Profiles
+@inject Qubic.Services.Networks.NetworkFingerprintService Fingerprint
+@inject Qubic.Services.Networks.ChainResetService ChainReset
+@inject Qubic.Services.Networks.NetworkSwitchService NetworkSwitch
+@inject Qubic.Services.Features.FeatureService Features
+@inject Qubic.WalletConnect.QubicWalletConnectService WalletConnectSvc
 @implements IDisposable
 
 <div class="qb-app">
@@ -47,6 +53,7 @@
         </div>
 
         <div class="qb-topbar-end">
+            <span class="qb-network-dot me-1" style="background:@Profiles.Active.BadgeColor" title="@Profiles.Active.Name"></span>
             @if (TickMonitor.IsConnected)
             {
                 <span class="badge-qb-success qb-connection-badge" @onclick="ToggleTickInfo" title="Connected">
@@ -55,19 +62,29 @@
             }
             else
             {
-                <span class="badge-qb-warning qb-connection-badge" title="Offline">
+                <span class="badge-qb-warning qb-connection-badge" @onclick="ToggleTickInfo" title="Offline">
                     <i class="bi bi-wifi-off"></i>
                 </span>
             }
         </div>
 
-        @if (_showTickInfo && TickMonitor.IsConnected)
+        @if (_showTickInfo)
         {
-            <div class="qb-tick-popup">
-                <span class="mono small">Epoch @(TickMonitor.Epoch) &middot; Tick @(TickMonitor.Tick)</span>
+            <div class="qb-tick-popup" @onclick:stopPropagation="true">
+                <div class="mb-1"><NetworkSwitcher /></div>
+                @if (TickMonitor.IsConnected)
+                {
+                    <span class="mono small">Epoch @(TickMonitor.Epoch) &middot; Tick @(TickMonitor.Tick)</span>
+                }
+                else if (TickMonitor.Error != null)
+                {
+                    <span class="small text-danger">@TickMonitor.Error</span>
+                }
             </div>
         }
     </header>
+
+    <NetworkBanner />
 
     <!-- Page Content -->
     <main class="qb-content" id="qb-content" @onclick="CloseOverlays">
@@ -91,6 +108,10 @@
     <!-- Bottom Tab Bar -->
     <TabBar />
 </div>
+
+<SigningReviewHost />
+<WalletConnectProposalHost />
+<FeaturesDialog OnSaved="OnFeaturesSaved" />
 
 @code {
     ErrorBoundary? _errorBoundary;
@@ -159,12 +180,31 @@
         TxTracker.SetEncryptionKey(entry.Seed);
     }
 
+
     protected override void OnInitialized()
     {
-        TickMonitor.OnTickChanged += OnStateChanged;
+        TickMonitor.OnTickChanged += OnTick;
         Seed.OnSeedChanged += OnStateChanged;
         Vault.OnVaultChanged += OnStateChanged;
         BalanceSvc.OnBalanceChanged += OnStateChanged;
+        NetworkSwitch.OnSwitched += OnStateChanged;
+        Qubic.Services.Networks.CoreLiteDevSeeds.Warmup();
+        if (Features.IsEnabled(Qubic.Services.Features.WalletFeature.WalletConnect))
+            _ = WalletConnectSvc.StartAsync();
+    }
+
+    void OnTick()
+    {
+        // Identify the network once the tick monitor (started on Home) is connected; retried while unidentified.
+        if (TickMonitor.IsConnected) _ = Fingerprint.RetryIfUnidentifiedAsync();
+        OnStateChanged();
+    }
+
+    void OnFeaturesSaved()
+    {
+        if (Features.IsEnabled(Qubic.Services.Features.WalletFeature.WalletConnect))
+            _ = WalletConnectSvc.StartAsync();
+        StateHasChanged();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -184,7 +224,8 @@
 
     public void Dispose()
     {
-        TickMonitor.OnTickChanged -= OnStateChanged;
+        TickMonitor.OnTickChanged -= OnTick;
+        NetworkSwitch.OnSwitched -= OnStateChanged;
         Seed.OnSeedChanged -= OnStateChanged;
         Vault.OnVaultChanged -= OnStateChanged;
         BalanceSvc.OnBalanceChanged -= OnStateChanged;
