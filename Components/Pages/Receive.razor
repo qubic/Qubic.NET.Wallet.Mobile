@@ -1,6 +1,7 @@
 @page "/receive"
 @inject SeedSessionService Seed
 @inject IJSRuntime JS
+@inject QubicBackendService Backend
 
 <h4>Receive</h4>
 
@@ -22,15 +23,28 @@ else
                     </div>
                 </div>
 
-                <!-- Identity -->
-                <div class="mb-1 small text-muted">Your Identity</div>
+                <!-- Identity / payment request -->
+                <div class="mb-1 small text-muted">@(_isRequest ? "Payment request" : "Your Identity")</div>
                 <div class="mono p-2 rounded mb-3"
                      style="font-size:0.7rem;background:var(--qb-bg-elevated);word-break:break-all;user-select:all">
-                    @Seed.Identity?.ToString()
+                    @_qrText
+                </div>
+
+                <div class="text-start mb-3">
+                    <div class="input-group input-group-sm mb-1">
+                        <span class="input-group-text">Amount</span>
+                        <input type="number" min="1" class="form-control" placeholder="optional" @bind="_reqAmount" @bind:after="GenerateQr" />
+                        <span class="input-group-text">QU</span>
+                    </div>
+                    <input class="form-control form-control-sm" maxlength="120" placeholder="Message (optional)" @bind="_reqMessage" @bind:after="GenerateQr" />
+                    @if (!Backend.Profile.IsMainnet)
+                    {
+                        <div class="small text-muted mt-1">Marked for <code>@Backend.Profile.ChainId</code> (@Backend.Profile.Name).</div>
+                    }
                 </div>
 
                 <button class="btn btn-primary w-100 mb-2" @onclick="CopyIdentity">
-                    <i class="bi bi-clipboard me-1"></i> @(_copied ? "Copied!" : "Copy Identity")
+                    <i class="bi bi-clipboard me-1"></i> @(_copied ? "Copied!" : _isRequest ? "Copy Payment Link" : "Copy Identity")
                 </button>
 
                 <button class="btn btn-outline-secondary w-100" @onclick="ShareIdentity">
@@ -43,6 +57,10 @@ else
 
 @code {
     string _qrSvg = "";
+    string _qrText = "";
+    bool _isRequest;
+    long? _reqAmount;
+    string? _reqMessage;
     bool _copied;
 
     protected override void OnInitialized()
@@ -54,9 +72,19 @@ else
     {
         var identity = Seed.Identity?.ToString();
         if (identity == null) return;
+        _isRequest = _reqAmount is > 0 || !string.IsNullOrWhiteSpace(_reqMessage) || !Backend.Profile.IsMainnet;
+        _qrText = _isRequest
+            ? new Qubic.Core.Payments.QubicPaymentRequest
+            {
+                Destination = identity,
+                Amount = _reqAmount is > 0 ? _reqAmount : null,
+                Message = string.IsNullOrWhiteSpace(_reqMessage) ? null : _reqMessage.Trim(),
+                Network = Backend.Profile.IsMainnet ? null : "testnet",
+            }.ToUri()
+            : identity;
 
         using var qrGenerator = new QRCoder.QRCodeGenerator();
-        var qrData = qrGenerator.CreateQrCode(identity, QRCoder.QRCodeGenerator.ECCLevel.M);
+        var qrData = qrGenerator.CreateQrCode(_qrText, QRCoder.QRCodeGenerator.ECCLevel.M);
 
         // Build SVG manually from the QR data
         var modules = qrData.ModuleMatrix;
@@ -85,11 +113,10 @@ else
 
     async Task CopyIdentity()
     {
-        var identity = Seed.Identity?.ToString();
-        if (identity == null) return;
+        if (string.IsNullOrEmpty(_qrText)) return;
         try
         {
-            await Clipboard.SetTextAsync(identity);
+            await Clipboard.SetTextAsync(_qrText);
             _copied = true;
             StateHasChanged();
             await Task.Delay(2000);
@@ -107,7 +134,7 @@ else
         {
             await Share.RequestAsync(new ShareTextRequest
             {
-                Text = identity,
+                Text = string.IsNullOrEmpty(_qrText) ? identity : _qrText,
                 Title = "Qubic Identity"
             });
         }

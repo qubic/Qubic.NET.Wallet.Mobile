@@ -1,5 +1,31 @@
 # Release Notes
 
+## v0.7.1
+
+### Security
+- **Seed generation now uses the operating system's secure random generator.** New seeds (create wallet, add account, add seed to vault) were built with .NET's general-purpose `System.Random`. That isn't an API meant for keys. On the .NET versions this app has always used (.NET 6 and later), each `new Random()` starts from 256 bits taken from the operating system's secure random source and was used only for that one seed, so we know of no practical way to predict seeds created by earlier versions. Seeds now come from `QubicSeed.Generate()` in `Qubic.Core`, the same generator the desktop wallet and the Toolkit use: secure randomness, every letter equally likely.
+
+### Features
+- **Networks.** Switch between Mainnet, a local AIO Qubic Dev Kit and your own networks under *More → Networks*. Each network uses Bob, RPC and/or a direct node connection, chosen per operation, and never falls back to servers outside the network. History, assets and settings are kept per network; any vault works on any network.
+- **Network check.** The wallet identifies the chain it is connected to (Mainnet, or a core-lite devnet) and warns when it doesn't match the network's settings. Chain resets on test networks are detected and stale history is cleared.
+- **Signing review.** Every signature shows the network, the decoded contract call, the target tick and warnings before you sign, including replay warnings when a seed signs on both Mainnet and a test network, and red warnings for public dev keys on Mainnet.
+- **Target tick by time.** Besides the fixed tick offset, transactions can target "in ~N seconds".
+- **Payment requests.** *Receive* creates `qubic:` links and QR codes with an amount and a message; *Send* fills its form from a scanned or pasted link.
+- **Optional features, off by default** (*More → Features*): Developer tools (dev accounts, faucet, Contract Console with C++ header import), Sign-In with Qubic, and WalletConnect with QR-code pairing.
+- Local test networks: the emulator reaches the host as `10.0.2.2`; on a USB phone use `adb reverse tcp:40420 tcp:40420 && adb reverse tcp:41841 tcp:41841`.
+
+### Notes
+- App id is `org.qubic.lab.wallet`.
+- Requires `Qubic.Core 1.301.9`, `Qubic.Services 1.6.0` and `Qubic.WalletConnect 1.0.0`.
+
+### Downloads
+
+| Platform | File |
+|----------|------|
+| Android | `org.qubic.lab.wallet-0.7.1.apk` |
+
+---
+
 ## v0.6.3
 
 ### Security — please update immediately
