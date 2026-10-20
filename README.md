@@ -12,8 +12,8 @@ A cross-platform mobile wallet for the Qubic network, built with .NET MAUI Blazo
 ## Features
 
 - **Vault Management** — Encrypted vault with multiple seeds, contacts address book, import/export, biometric unlock (fingerprint/face)
-- **Networks** — Switch between Mainnet, a local AIO Dev Kit and your own networks (*More → Networks*); each network uses Bob, RPC and/or direct node connections, chosen per operation, with no silent fallback to other servers ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/main/docs/guide/networks.md))
-- **Signing review** — Every signature shows the network, the decoded contract call, the target tick and warnings (replay risk across networks, public dev keys on Mainnet) before anything is signed ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/main/docs/guide/signing.md))
+- **Networks** — Switch between Mainnet, a local AIO Dev Kit and your own networks (*More → Networks*); each network uses Bob, RPC and/or direct node connections, chosen per operation, with no silent fallback to other servers ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/master/docs/guide/networks.md))
+- **Signing review** — Every signature shows the network, the decoded contract call, the target tick and warnings (replay risk across networks, public dev keys on Mainnet) before anything is signed ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/master/docs/guide/signing.md))
 - **Send QU** — Transfer QU tokens with transaction tracking, auto-resend, a fixed tick offset or "execute in ~N seconds", and pasted `qubic:` payment links
 - **Receive / QR Code** — Generate and share QR codes for your wallet address, or a payment request with amount and message
 - **Asset Management** — View owned assets with details and transfer capability
@@ -23,9 +23,9 @@ A cross-platform mobile wallet for the Qubic network, built with .NET MAUI Blazo
 - **Sync Manager** — Real-time sync status, stream diagnostics, database stats, and watermark management
 - **QR Scanner** — Native camera-based QR scanning on all address input fields
 - **Settings** — Network profiles, transaction parameters, data import/export
-- **Optional features** (*More → Features*, all off by default): Developer tools with dev accounts, faucet and Contract Console; Sign-In with Qubic; WalletConnect with QR pairing ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/main/docs/guide/features.md))
+- **Optional features** (*More → Features*, all off by default): Developer tools with dev accounts, faucet and Contract Console; Sign-In with Qubic; WalletConnect with QR pairing ([guide](https://github.com/qubic/Qubic.Net.Wallet/blob/master/docs/guide/features.md))
 
-Developing on a local testnet? See the [AIO tutorial](https://github.com/qubic/Qubic.Net.Wallet/blob/main/docs/guide/aio-tutorial.md). On the emulator use host `10.0.2.2`; on a USB phone run `adb reverse tcp:40420 tcp:40420 && adb reverse tcp:41841 tcp:41841`.
+Developing on a local testnet? See the [AIO tutorial](https://github.com/qubic/Qubic.Net.Wallet/blob/master/docs/guide/aio-tutorial.md). On the emulator use host `10.0.2.2`; on a USB phone run `adb reverse tcp:40420 tcp:40420 && adb reverse tcp:41841 tcp:41841`.
 
 ## Architecture
 
@@ -60,25 +60,25 @@ Qubic.Net.Wallet.Mobile/
 
 ### Prerequisites
 
-- .NET 9 SDK
+- .NET 10 SDK with the `maui-android` workload (`dotnet workload install maui-android`)
 - Android SDK (API 24+, build tools for API 35)
 - Java 11 JDK
 
 ### Build APK
 
 ```bash
-dotnet publish -f net9.0-android -c Release
+dotnet publish -f net10.0-android -c Release
 ```
 
 The signed APK is output to:
 ```
-bin/Release/net9.0-android/publish/li.qubic.wallet-Signed.apk
+bin/Release/net10.0-android/publish/org.qubic.lab.wallet-Signed.apk
 ```
 
 ### Install on Device/Emulator
 
 ```bash
-adb install -r bin/Release/net9.0-android/publish/li.qubic.wallet-Signed.apk
+adb install -r bin/Release/net10.0-android/publish/org.qubic.lab.wallet-Signed.apk
 ```
 
 ## Setup After Clone

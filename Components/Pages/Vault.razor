@@ -564,9 +564,7 @@ else
 
     void GenerateNewSeed()
     {
-        var chars = "abcdefghijklmnopqrstuvwxyz";
-        var rng = new Random();
-        _generatedSeed = new string(Enumerable.Range(0, 55).Select(_ => chars[rng.Next(chars.Length)]).ToArray());
+        _generatedSeed = Qubic.Core.QubicSeed.Generate();
         _newSeed = _generatedSeed;
         _revealSeed = false;
     }

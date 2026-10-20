@@ -377,12 +377,7 @@ else
 
     string VaultFilePath => Path.Combine(FileSystem.AppDataDirectory, "vault.dat");
 
-    string GenerateRandomSeed()
-    {
-        var chars = "abcdefghijklmnopqrstuvwxyz";
-        var rng = new Random();
-        return new string(Enumerable.Range(0, 55).Select(_ => chars[rng.Next(chars.Length)]).ToArray());
-    }
+    string GenerateRandomSeed() => Qubic.Core.QubicSeed.Generate();
 
     void GenerateSeed()
     {

@@ -14,8 +14,8 @@
     <!-- App identifiers -->
     <ApplicationTitle>Qubic Wallet</ApplicationTitle>
     <ApplicationId>org.qubic.lab.wallet</ApplicationId>
-    <ApplicationDisplayVersion>0.7.0</ApplicationDisplayVersion>
-    <ApplicationVersion>11</ApplicationVersion>
+    <ApplicationDisplayVersion>0.7.1</ApplicationDisplayVersion>
+    <ApplicationVersion>12</ApplicationVersion>
 
     <!-- Android -->
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24</SupportedOSPlatformVersion>
@@ -44,6 +44,7 @@
     See NuGet.config for the local feed during development.
   -->
   <ItemGroup>
+    <PackageReference Include="Qubic.Core" Version="1.301.9" />
     <PackageReference Include="Qubic.Services" Version="1.6.0" />
     <PackageReference Include="Qubic.WalletConnect" Version="1.0.0" />
   </ItemGroup>
